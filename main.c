@@ -12,7 +12,7 @@
 #define TOKEN_TIMEOUT 100 // How much time will I stay with the token?
 #define RECOVERY_TIMEOUT 1000 // How much time will I wait before I create a new token? I have to calculate it!
 
-int Token = -1;
+int Token = -1,Machine=-1;
 int Next,Prev;
 
 int send_msg(char *s) {
@@ -83,19 +83,25 @@ int main(int argc, char* arv[]) {
     char *host;
     char *dados;
 */
-    if(argc != 2) {
-        puts("Correct way to opearate: <Machine number> <port>");
+    if(argc != 1) {
+        puts("Correct way to opearate: <Machine number>");
         return -1;
     }
 
-    Token = args[1] - 33; // This probably does not work. Check it later please.
-    if(Token == 1) {
+    Machine = args[1] - 33; // This probably does not work. Check it later please.
+    if(Machine == 1) {
         create_token();
+        Token = 1;
         Next = port+1;
         Prev = port+3;
     } else if(Token == 4) {
         Next = port-3;
         Prev = port-1;
+        Token = 0;
+    } else {
+        Next = port+1;
+        Prev = port-1;
+        Token =0;
     }
 
     create_server(port);
@@ -124,9 +130,10 @@ int main(int argc, char* arv[]) {
                 receive_msg(); // What structure is my message? Could it be only a string?
                 if(typeof_msg() == 't') { // t is for token.
                     Token = THIS;
-                    set_timeout(TOKEN_TIMEOUT)
+                    set_timeout(TOKEN_TIMEOUT);
                 } else {
                     print_message();
+                    send_msg();
                 }
             } else {
                 // Got nothing. Do nothing.
