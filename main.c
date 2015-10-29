@@ -7,7 +7,13 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <poll.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <string.h>
 
+#define MAX_HOSTNAME 64
 #define TOKEN_TIMEOUT 100 // How much time will I stay with the token?
 #define RECOVERY_TIMEOUT 1000 // How much time will I wait before I create a new token? I have to calculate it!
 #define PORT 47237 // The base port, used to get all 4 ports (which will be 47237,47238,47239,47240).
@@ -18,6 +24,7 @@ int Machine = -1; // The number of my machine(1-4).
 int Next,Prev; // Number of the previous / next machine (1-4).
 int In,Out; // Number of the In port and the Out port (from my machine).
 int SockIn,SockOut; // Socket in = server socket, Socket out = client socket.
+struct sockaddr_in Sa, Isa;  /* Sa = server, Isa = client */
 
 int send_msg(char *s) {
 /* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
@@ -76,16 +83,45 @@ int send_token() {
 /* Send the token to the next machine. */
 }
 
+void create_server(struct hostent *hp) {
+/* Inicialize server */
+    Sa.sin_port = htons(In);
+    memcpy((char*)hp->h_addr, (char*)&Sa.sin_addr, hp->h_length);
+    Sa.sin_family = hp->h_addrtype;
+    if ((SockIn = socket(hp->h_addrtype,SOCK_DGRAM,0)) < 0){
+        puts("Could not open socket.");
+        return -1;
+    }
+
+    if (bind(SockIn, (struct sockaddr *) &sa,sizeof(sa)) < 0){
+        puts("Could not bind.");
+        return -1;
+    }
+ 
+
+}
+
 int main(int argc, char* arv[]) {
-    struct pollfd fds[2];
-    fds[0] = { STDIN_FILENO, POLLIN|POLLPRI };
-    fds[1].fd = Socket;
     int timeout_msecs = 500;
     int i=0,bufLen = 0,bufFirst = 0;
     char **buf;
-    char *s;
+    char *s,*hostname;
+    struct hostent *hp;
+    struct pollfd fds[2];
+
+    buf = malloc(sizeof(char*) * BUF_MAX);
+    hostname = malloc(MAX_HOSTNAME);
     s = malloc(1024);
     s[0] = '\0';
+    fds[0] = { STDIN_FILENO, POLLIN|POLLPRI };
+    fds[1].fd = Socket;
+
+    get_hostname(localhost, hostname);
+
+    if ((hp = gethostbyname( localhost)) == NULL){
+        puts("Couldn't get my own IP.");
+        return -1;
+    }
 
 /*
     int sockdescr;
@@ -135,7 +171,7 @@ int main(int argc, char* arv[]) {
         return -1;
     }
 
-    create_server(In); // I do not need to use this parameter, its just to remember that I will have to use it in this function.
+    create_server(hp); // I do not need to use this parameter, its just to remember that I will have to use it in this function.
 
     puts("When all machines have set up the server, type any number to start connecting clients.");
     scanf("%d",&i);
