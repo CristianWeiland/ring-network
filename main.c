@@ -1,7 +1,24 @@
-// http://www.inf.ufpr.br/elias/redes/servudp.c.txt
-// http://www.inf.ufpr.br/elias/redes/cliudp.c.txt
-// <3 Elias
+/* 
+http://www.inf.ufpr.br/elias/redes/servudp.c.txt
+http://www.inf.ufpr.br/elias/redes/cliudp.c.txt
+*/
+/*
+Encapsulation:
+Start Delimiter - 8 bits
+Length
+Sequency
+Dest Add
+Orig Add
+Data
+Vertical Parity - 8 bits
+Message Status with Token/Monitor - 8 bits
+Status: A C T M A C 0 0 no qual: A = Address recognized (got message), C = Message Copied (message had no error), T = Token (is token?), M = Monitor (is monitor?)
 
+Machine number 1 = bowmore
+Machine number 2 = orval
+Machine number 3 = achel
+Machine number 4 = latrappe
+*/
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +29,17 @@
 #include <netdb.h>
 #include <sys/types.h>
 #include <string.h>
+
+typedef struct Message {
+    unsigned char init;
+    unsigned char len;
+    unsigned char seq;
+    unsigned char dest[6];
+    unsigned char orig[6];
+    unsigned char *data;
+    unsigned char parity;
+    unsigned char status;
+} Message;
 
 #define MAX_HOSTNAME 64
 #define TOKEN_TIMEOUT 100 // How much time will I stay with the token?
@@ -24,7 +52,8 @@ int Machine = -1; // The number of my machine(1-4).
 int Next,Prev; // Number of the previous / next machine (1-4).
 int In,Out; // Number of the In port and the Out port (from my machine).
 int SockIn,SockOut; // Socket in = server socket, Socket out = client socket.
-struct sockaddr_in Sa, Isa;  /* Sa = server, Isa = client */
+struct sockaddr_in SocketS, SocketC;  /* SocketS = server, SocketC = client */
+char **Hosts;
 
 int send_msg(char *s) {
 /* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
@@ -50,12 +79,12 @@ int add_buffer(char **buf, int *len, int first, char *s) {
     return 1;
 }
 
-??? receive_msg() {
+Message receive_msg() {
 /* This function should be triggered whenever there is a new message in the socket.
    It will read a new message and return it. */
 }
 
-char typeof_msg(??? m) {
+char typeof_msg(Message m) {
 /* It should return if my message is a token or data */
 }
 
@@ -85,20 +114,38 @@ int send_token() {
 
 void create_server(struct hostent *hp) {
 /* Inicialize server */
-    Sa.sin_port = htons(In);
-    memcpy((char*)hp->h_addr, (char*)&Sa.sin_addr, hp->h_length);
-    Sa.sin_family = hp->h_addrtype;
-    if ((SockIn = socket(hp->h_addrtype,SOCK_DGRAM,0)) < 0){
+    SocketS.sin_port = htons(In);
+    memcpy((char*)&SocketS.sin_addr, (char*)hp->h_addr, hp->h_length);
+    SocketS.sin_family = hp->h_addrtype;
+
+    if ((SockIn = socket(hp->h_addrtype, SOCK_DGRAM, 0)) < 0){
         puts("Could not open socket.");
-        return -1;
+        exit(1);
     }
 
     if (bind(SockIn, (struct sockaddr *) &sa,sizeof(sa)) < 0){
         puts("Could not bind.");
-        return -1;
+        exit(1);
     }
- 
+}
 
+void create_client(struct hostent *hp) {
+    char *host = Hosts[Machine % 4];
+
+    if((hp = gethostbyname(host)) == NULL){
+        puts("Could not find server IP.");
+        exit(1);
+    }
+
+    memcpy((char*)&SocketC.sin_addr, (char*)hp->h_addr, hp->h_length);
+    SocketC.sin_family = hp->h_addrtype;
+
+    SocketC.sin_port = htons(Out);
+
+    if((SockOut = socket(hp->h_addrtype, SOCK_DGRAM, 0)) < 0) {
+      puts("Could not open socket.");
+      exit(1);
+    }
 }
 
 int main(int argc, char* arv[]) {
@@ -106,7 +153,7 @@ int main(int argc, char* arv[]) {
     int i=0,bufLen = 0,bufFirst = 0;
     char **buf;
     char *s,*hostname;
-    struct hostent *hp;
+    struct hostent *hp,*hp2;
     struct pollfd fds[2];
 
     buf = malloc(sizeof(char*) * BUF_MAX);
@@ -115,6 +162,11 @@ int main(int argc, char* arv[]) {
     s[0] = '\0';
     fds[0] = { STDIN_FILENO, POLLIN|POLLPRI };
     fds[1].fd = Socket;
+    Hosts = malloc(sizeof(char*) * 4);
+    Hosts[0] = "bowmore"; // 1
+    Hosts[1] = "orval"; // 2
+    Hosts[2] = "achel"; // 3
+    Hosts[3] = "latrappe"; // 4
 
     get_hostname(localhost, hostname);
 
