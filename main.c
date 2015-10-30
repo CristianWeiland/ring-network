@@ -35,8 +35,8 @@ typedef struct Message {
     unsigned char init;
     unsigned char len;
     unsigned char seq;
-    unsigned char dest[6];
-    unsigned char orig[6];
+    unsigned char dest; // I will send my machine number.
+    unsigned char orig;
     unsigned char *data;
     unsigned char parity;
     unsigned char status;
@@ -62,10 +62,11 @@ char **Hosts;
 struct timeval TBegin,TEnd,RBegin,REnd; // TBegin = Time I got token. TEnd = Time my token will expire.
                                         // RBegin = Time I send my token (for recovery). REnd = time I have to create a new token.
 
-
+unsigned char calculate_parity(Message m);
+Message receive_msg();
 
 char *msg_to_str(Message m) {
-    int i,len = strlen(m->data);
+    int i,len = strlen(m.data);
     char *aux,*s = malloc(len + 18);
     memcpy(s,&m,len+17);
     s[len+17] = '\0';
@@ -110,16 +111,19 @@ char *msg_to_str(Message m) {
     */
 }
 
-Message create_msg(char *s,int status) {
+Message create_msg(char *s,int status,int destiny) {
 /* Parameter s is only data. Status = 1 -> msg is token. Status = 2 -> msg is monitor. Status = 0 -> msg is data. */
-    Message m = malloc(strlen(s) + 18);
+    Message m;
+    //&m = malloc(strlen(s) + 18);
     m.init = INIT;
     m.len = strlen(s);
     m.seq = Seq;
     Seq = (Seq++) % 256;
-    memcpy(m.dest,   ,6); // What should I do here?
-    memcpy(m.orig,   ,6); // What should I do here?
-    m.data = strcpy(m.data, s, strlen(s));
+    //memcpy(m.dest,   ,6); // What should I do here?
+    //memcpy(m.orig,   ,6); // What should I do here?
+    m.dest = destiny;
+    m.orig = Machine; // This sinalizes me!
+    m.data = strcpy(m.data, s);
     if(status == 1) {
         m.status = TOKEN_BIT;
     } else if(status == 2) {
@@ -132,20 +136,18 @@ Message create_msg(char *s,int status) {
 }
 
 Message str_to_msg(char *s) {
-    Message m = malloc(strlen(s) + 18);
-    memcpy(m,s,strlen(s)+17);
+    Message m;
+    //&m = malloc(strlen(s) + 18);
+    memcpy(&m,s,strlen(s)+17);
     return m;
 }
 
 unsigned char calculate_parity(Message m) {
     int i;
     unsigned char res = 0;
-    res = m.len ^ m.seq ^ m.status;
-    for(i=0; i<6; i++) {
-        res = res ^ m.dest[i] ^ m.orig[i];
-    }
+    res = m.len ^ m.seq ^ m.status ^ m.dest ^ m.orig;
     for(i=0; i < (int)m.len; i++) {
-        res = res ^ m->data[i];
+        res = res ^ m.data[i];
     }
     return res;
 }
@@ -158,28 +160,30 @@ int send_msg(Message m) {
     return 1;
 }
 
-int remove_msg(char *s) {
+int remove_msg() {
 /* This function should remove the message I previously sent from the ring. Return 1 on success, 0 on failure. */
     Message m;
     m = receive_msg();
-    if(strcmp(m.orig,EU) == 0) {
+    if(m.orig == Machine) {
         return 1;
     }
     return 0;
 }
 
-int add_buffer(char **buf, int *len, int first, char *s) {
+int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
 /* Parameters: Buffer, how many strings I have on the buffer and the string I will add in the buffer.
    I should add the string s to my buffer, so I can send it when I get the token.
-   Returns 1 on success, 0 on failure (unable to allocate memory). */
+   Returns 1 on success, 0 on failure (unable to allocate memory).
+   PS: I dont have to use destLen neither destFirst, its the same position as buffer.*/
     if(*len == BUF_MAX) // Buffer is full. I could, insted of return 0, realloc my buffer and make it a smart buffer. Maybe later.
         return 0;
-    int pos = (*len + first) % 1024; // Circular line. (Line eh a traducao certa de fila?)
-    if(buf[pos] = malloc(sizeof(char) * (strlen(s) + 1)) == NULL) {
+    int pos = (*len + first) % 1024; // Circular.
+    if((buf[pos] = malloc(sizeof(char) * (strlen(s) + 1))) == NULL) {
         puts("(add_buffer) Unable to allocate memory.");
         return 0;
     }
     strcpy(buf[pos],s);
+    destVec[pos] = dest; // I added the string, I have to know its destiny.
     (*len)++;
     return 1;
 }
@@ -190,10 +194,11 @@ Message receive_msg() {
     Message m;
     char *s = malloc(1024);
     s[0] = '\0';
+    int x = sizeof(SocketS);
     while(s[0] != INIT) {
-        recvfrom(In, s, 1024, 0, (struct sockaddr *) &SocketS, &(sizeof(SocketS)));
+        recvfrom(In, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
     }
-    m = str_to_msg(s)
+    m = str_to_msg(s);
     return m;
 }
 
@@ -263,13 +268,14 @@ void print_message(Message m) {
     aux2 = strcpy(aux2,m.orig);
 */;
 
-    printf("Msg: Init = %c, Len = %c, Seq = %c, Dest = %s, Orig = %s, Data = %s, Parity = %c, Status = %c",
+    printf("Msg: Init = %c, Len = %c, Seq = %c, Dest = %c, Orig = %c, Data = %s, Parity = %c, Status = %c",
         m.init,m.len,m.seq,m.dest,m.orig,m.data,m.parity,m.status);
 }
 
-int rem_buffer(char **buf, int *len, int *first) {
+int rem_buffer(char **buf, int *len, int *first,int *destVec) {
 /* This function will remove the first element from the buffer and update its length and first position. */
-    free(buf[first]); // Erasing data.
+    free(buf[*first]); // Erasing data.
+    destVec[*first] = -1;
     (*len)++;
     ((*first)++) % BUF_MAX; // If first is 1024, it will become 0 again.
     return 1;
@@ -278,7 +284,15 @@ int rem_buffer(char **buf, int *len, int *first) {
 int send_token() {
 /* Send the token to the next machine. */
     Message m;
-    m = create_msg("\0",1); // Not sure if that \0 is needed.
+    m = create_msg("\0",1,Next); // Not sure if that \0 is needed.
+    send_msg(m);
+    return 1;
+}
+
+int send_monitor() {
+/* Send the token to the next machine. */
+    Message m;
+    m = create_msg("\0",2,Next); // Not sure if that \0 is needed.
     send_msg(m);
     return 1;
 }
@@ -294,7 +308,7 @@ void create_server(struct hostent *hp) {
         exit(1);
     }
 
-    if (bind(SockIn, (struct sockaddr *) &sa,sizeof(sa)) < 0){
+    if (bind(SockIn, (struct sockaddr *) &SocketS,sizeof(SocketS)) < 0){
         puts("Could not bind.");
         exit(1);
     }
@@ -319,43 +333,34 @@ void create_client(struct hostent *hp) {
     }
 }
 
-int main(int argc, char* arv[]) {
-    int timeout_msecs = 50,expired;
-    int i=0,bufLen = 0,bufFirst = 0,type;
+int main(int argc, char* argv[]) {
+    int timeout_msecs = 50,expired,dest,*destVec;
+    int i=0,bufLen = 0,bufFirst = 0,destLen = 0,destFirst = 0,type;
     char **buf;
-    char *s,*hostname;
+    char *s,*localhost;
     struct hostent *hp,*hp2;
-    struct pollfd fds[2];
+    struct pollfd fds[2],fdAux = { STDIN_FILENO, POLLIN|POLLPRI };
     Message m;
 
+    destVec = malloc(sizeof(int) * BUF_MAX);
     buf = malloc(sizeof(char*) * BUF_MAX);
-    hostname = malloc(MAX_HOSTNAME);
-    s = malloc(1024);
+    localhost = malloc(MAX_HOSTNAME);
+    s = malloc(1026);
     s[0] = '\0';
-    fds[0] = { STDIN_FILENO, POLLIN|POLLPRI };
-    fds[1].fd = Socket;
+    fds[0] = fdAux;
+    fds[1].fd = In;
     Hosts = malloc(sizeof(char*) * 4);
     Hosts[0] = "bowmore"; // 1
     Hosts[1] = "orval"; // 2
     Hosts[2] = "achel"; // 3
     Hosts[3] = "latrappe"; // 4
 
-    get_hostname(localhost, hostname);
+    gethostname(localhost, MAX_HOSTNAME);
 
-    if ((hp = gethostbyname( localhost)) == NULL){
+    if ((hp = gethostbyname(localhost)) == NULL) {
         puts("Couldn't get my own IP.");
         return -1;
     }
-
-/*
-    int sockdescr;
-    int numbytesrecv;
-    struct sockaddr_in sa;
-    struct hostent *hp;
-    char buf[BUFSIZ+1];
-    char *host;
-    char *dados;
-*/
 
     if(argc != 1) {
         puts("Correct way to opearate: <Machine number>");
@@ -370,23 +375,23 @@ int main(int argc, char* arv[]) {
     4           PORT+3   PORT
 */
 
-    Machine = args[1][0] - 48;
+    Machine = argv[1][0] - 48;
     if(Machine == 1) {
-        create_token();
         Token = 1;
-        Next = port+1;
-        Prev = port+3;
+        set_timeout(1); // 1 means token_timeout.
+        Next = PORT+1;
+        Prev = PORT+3;
         In = PORT + Machine - 1;
         Out = PORT + Machine;
     } else if(Token == 4) {
-        Next = port-3;
-        Prev = port-1;
+        Next = PORT-3;
+        Prev = PORT-1;
         Token = 0;
         In = PORT + Machine - 1;
         Out = PORT;
     } else if(Token == 2 || Token == 3) {
-        Next = port+1;
-        Prev = port-1;
+        Next = PORT+1;
+        Prev = PORT-1;
         Token = 0;
         In = PORT + Machine - 1;
         Out = PORT + Machine;
@@ -400,38 +405,51 @@ int main(int argc, char* arv[]) {
     puts("When all machines have set up the server, type any number to start connecting clients.");
     scanf("%d",&i);
 
-    create_client(Out);
+    create_client(hp2);
 
     while(1) {
         while(Token && bufLen > 0) {
-            while(!send_msg(buf[0]));
-            while(!remove_msg(buf[0]);
-            remove_from_buffer(buf,&bufLen,&bufFirst);
+            Message m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
+            while(!send_msg(m));
+            if(poll(&(fds[1]),1,timeout_msecs)) {
+                remove_msg();
+            }
+            rem_buffer(buf,&bufLen,&bufFirst,destVec);
             if(timedout() == 1) { // Token time out.
                 send_token();
-                set_timeout(RECOVERY_TIMEOUT);
+                set_timeout(2); // 2 means recovery_timeout.
             }
         }
-        if( poll(fds, 2, timeout_msecs) ) { // There is something to be read. Message or stdin.
+        if(poll(fds, 2, timeout_msecs) ) { // There is something to be read. Message or stdin.
             if(fds[0].revents & POLLIN|POLLPRI) { // Got something in STDIN.
-                fgets(s,1023,stdin); // Is 1023 enough?
-                if(Token) {
-                    while(!send_msg(s)); // Send a message with my string s.
-                    while(!remove_msg(s));
+                fgets(s,1025,stdin); // Is 1023 enough? See * (down there).
+                int dest = s[0] - 48;
+                if(dest < 0 || dest > 5) {
+                    puts("Format not known.");
                 } else {
-                    add_buffer(buf,&bufLen,first,s);
+                    s += 2; // My data shall not contain the two first characters - machine number and space. ("3 ")
+                    if(Token) {
+                        Message m = create_msg(s,0,dest);
+                        while(!send_msg(m)); // Send a message with my string s.
+                        while(!remove_msg());
+                    } else {
+                        add_buffer(buf,&bufLen,bufFirst,s,dest,destVec);
+                    }
+                    s -= 2;
                 }
             } else if(fds[1].revents & POLLIN) { // Got a message! (Remember to check this & (AND).
                 m = receive_msg(); // What structure is my message? Could it be only a string?
                 type = typeof_msg(m);
                 if(type == 1) { // Got a token
                     Token = 1;
-                    set_timeout(TOKEN_TIMEOUT);
+                    set_timeout(1); // 1 means token_timeout.
                 } else if(type == 2) { // Got a monitor - someone created a new token!
                     Token = 0;
                     send_msg(m);
                 } else {
-                    print_message(m);
+                    if(m.dest == Machine || m.dest == 5) { // Its for me!
+                        print_message(m);
+                    }
                     send_msg(m);
                 }
             } else {
@@ -440,7 +458,7 @@ int main(int argc, char* arv[]) {
             if(expired = timedout() || bufLen == 0) {
                 if(expired == 1 || bufLen == 0) { // My token timedout or my buffer is empty.
                     send_token();
-                    set_timeout(RECOVERY_TIMEOUT);
+                    set_timeout(2); // 2 means recovery_timeout.
                 } else if(expired == 2) { // Recovery timeout expired.
                     Token = 1;
                     send_monitor();
@@ -449,3 +467,9 @@ int main(int argc, char* arv[]) {
         }
     }
 }
+
+/*
+About typing format: Your message should be something like:
+1 All the things I want to say to machine number 1.
+It will be read in this way: 1 digit (In that example, 1), which is the machine number, a space and then text.
+*/
