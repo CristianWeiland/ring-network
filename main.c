@@ -1,4 +1,4 @@
-/* 
+/*
 http://www.inf.ufpr.br/elias/redes/servudp.c.txt
 http://www.inf.ufpr.br/elias/redes/cliudp.c.txt
 */
@@ -29,6 +29,7 @@ Machine number 4 = latrappe
 #include <netdb.h>
 #include <sys/types.h>
 #include <string.h>
+#include <sys/time.h>
 
 typedef struct Message {
     unsigned char init;
@@ -41,12 +42,16 @@ typedef struct Message {
     unsigned char status;
 } Message;
 
+#define TOKEN_BIT 32
+#define MONITOR_BIT 16
+#define INIT 126
 #define MAX_HOSTNAME 64
 #define TOKEN_TIMEOUT 100 // How much time will I stay with the token?
 #define RECOVERY_TIMEOUT 1000 // How much time will I wait before I create a new token? I have to calculate it!
 #define PORT 47237 // The base port, used to get all 4 ports (which will be 47237,47238,47239,47240).
 #define BUF_MAX 1024
 
+int Seq = 0; // My maximum sequency is 255.
 int Token = -1; // -1 If I dont know if I have the token, 0 if I dont have, 1 if I have.
 int Machine = -1; // The number of my machine(1-4).
 int Next,Prev; // Number of the previous / next machine (1-4).
@@ -54,13 +59,113 @@ int In,Out; // Number of the In port and the Out port (from my machine).
 int SockIn,SockOut; // Socket in = server socket, Socket out = client socket.
 struct sockaddr_in SocketS, SocketC;  /* SocketS = server, SocketC = client */
 char **Hosts;
+struct timeval TBegin,TEnd,RBegin,REnd; // TBegin = Time I got token. TEnd = Time my token will expire.
+                                        // RBegin = Time I send my token (for recovery). REnd = time I have to create a new token.
 
-int send_msg(char *s) {
+
+
+char *msg_to_str(Message m) {
+    int i,len = strlen(m->data);
+    char *aux,*s = malloc(len + 18);
+    memcpy(s,&m,len+17);
+    s[len+17] = '\0';
+    /* // This comments are in case the solution above does not work.
+    aux = s;
+    *s = m.init;
+    s++;
+    *s = m.len;
+    s++;
+    *s = m.seq;
+    s++;
+    for(i = 0; i < 6; i++) {
+        *s = m.dest[i];
+        s++;
+    }
+    for(i = 0; i < 6; i++) {
+        *s = m.orig[i];
+        s++;
+    }
+    for(i = 0; i < len; i++) {
+        *s = m.data[i];
+        s++;
+    }
+    *s = parity;
+    s++;
+    *s = status;
+    s++
+    *s = '\0';
+    /*
+    s[0] = m.init;
+    s[1] = m.len;
+    s[2] = m.seq;
+    for(i = 0; i < 6; i++) {
+        s[i+3] = m.dest[i];
+        s[i+9] = m.orig[i];
+    }
+    for(i = 0; i < len; i++) {
+        s[i+15] = m.data[i];
+    }
+    s[len+15] = parity;
+    s[len+16] = status;
+    */
+}
+
+Message create_msg(char *s,int status) {
+/* Parameter s is only data. Status = 1 -> msg is token. Status = 2 -> msg is monitor. Status = 0 -> msg is data. */
+    Message m = malloc(strlen(s) + 18);
+    m.init = INIT;
+    m.len = strlen(s);
+    m.seq = Seq;
+    Seq = (Seq++) % 256;
+    memcpy(m.dest,   ,6); // What should I do here?
+    memcpy(m.orig,   ,6); // What should I do here?
+    m.data = strcpy(m.data, s, strlen(s));
+    if(status == 1) {
+        m.status = TOKEN_BIT;
+    } else if(status == 2) {
+        m.status = MONITOR_BIT;
+    } else {
+        m.status = 0;
+    }
+    m.parity = calculate_parity(m);
+    return m;
+}
+
+Message str_to_msg(char *s) {
+    Message m = malloc(strlen(s) + 18);
+    memcpy(m,s,strlen(s)+17);
+    return m;
+}
+
+unsigned char calculate_parity(Message m) {
+    int i;
+    unsigned char res = 0;
+    res = m.len ^ m.seq ^ m.status;
+    for(i=0; i<6; i++) {
+        res = res ^ m.dest[i] ^ m.orig[i];
+    }
+    for(i=0; i < (int)m.len; i++) {
+        res = res ^ m->data[i];
+    }
+    return res;
+}
+
+int send_msg(Message m) {
 /* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
+    char *s;
+    s = msg_to_str(m);
+    sendto(Out, s, strlen(s), 0, (struct sockaddr *) &SocketC, sizeof(SocketC));
+    return 1;
 }
 
 int remove_msg(char *s) {
 /* This function should remove the message I previously sent from the ring. Return 1 on success, 0 on failure. */
+    Message m;
+    m = receive_msg();
+    if(strcmp(m.orig,EU) == 0) {
+        return 1;
+    }
+    return 0;
 }
 
 int add_buffer(char **buf, int *len, int first, char *s) {
@@ -82,22 +187,84 @@ int add_buffer(char **buf, int *len, int first, char *s) {
 Message receive_msg() {
 /* This function should be triggered whenever there is a new message in the socket.
    It will read a new message and return it. */
+    Message m;
+    char *s = malloc(1024);
+    s[0] = '\0';
+    while(s[0] != INIT) {
+        recvfrom(In, s, 1024, 0, (struct sockaddr *) &SocketS, &(sizeof(SocketS)));
+    }
+    m = str_to_msg(s)
+    return m;
 }
 
-char typeof_msg(Message m) {
-/* It should return if my message is a token or data */
+int typeof_msg(Message m) {
+/* It should return if my message is a token (1), monitor(2) or data(0) */
+    if(m.status & TOKEN_BIT) {
+        return 1;
+    } else if(m.status & MONITOR_BIT) {
+        return 2;
+    } else {
+        return 0;
+    }
 }
 
-void set_timeout(int timeout) {
+void set_timeout(int type) {
 /* I will create a timeout of 'timeout' miliseconds. */
-}
+    if(type == 1) { // Got the token.
+        //gettimeofday(&GotToken, NULL);
+        gettimeofday(&TEnd, NULL); // Got time right now. I have to add TOKEN_TIMEOUT.
+        TEnd.tv_usec += TOKEN_TIMEOUT;
+        /*if(TEnd.tv_usec > 1000 - TOKEN_TIMEOUT) { // I can simply add to usecs, it will overflow.
+            TEnd.tv_sec++;
+            int sub = 1000 - TEnd.tv_usec;
+            TEnd.tv_usec = TOKEN_TIMEOUT - sub;
+        } else {
+            TEnd.tv_usec += TOKEN_TIMEOUT;
+        }*/
 
-void print_message() {
-
+    } else { // Token sent, recovery timeout.
+        //gettimeofday(&RBegin, NULL);
+        gettimeofday(&REnd, NULL); // Got time right now. I have to add TOKEN_TIMEOUT.
+        REnd.tv_usec += RECOVERY_TIMEOUT; // Since I am using exactly 1 sec timeout, I can do it this way.
+    }
 }
 
 int timedout() {
-/* Check if a timeout occured. */
+/* Check if a timeout occured. If my Token timedout, return 1. */
+    struct timeval now;
+    gettimeofday(&now, NULL);
+    if(now.tv_usec > TEnd.tv_usec && TEnd.tv_usec != 0) {
+        TEnd.tv_usec = 0; // Reset my timer.
+        return 1;
+    } else if(now.tv_usec > REnd.tv_usec && REnd.tv_usec != 0) {
+        REnd.tv_usec = 0;
+        return 2;
+    } else {
+        return 0;
+    }
+}
+
+/*
+    unsigned char init;
+    unsigned char len;
+    unsigned char seq;
+    unsigned char dest[6];
+    unsigned char orig[6];
+    unsigned char *data;
+    unsigned char parity;
+    unsigned char status;
+*/
+void print_message(Message m) {
+/*
+    char *aux1,*aux2;
+    aux1 = malloc(7);
+    aux2 = malloc(7);
+    aux1 = strcpy(aux1,m.dest);
+    aux2 = strcpy(aux2,m.orig);
+*/;
+
+    printf("Msg: Init = %c, Len = %c, Seq = %c, Dest = %s, Orig = %s, Data = %s, Parity = %c, Status = %c",
+        m.init,m.len,m.seq,m.dest,m.orig,m.data,m.parity,m.status);
 }
 
 int rem_buffer(char **buf, int *len, int *first) {
@@ -110,6 +277,10 @@ int rem_buffer(char **buf, int *len, int *first) {
 
 int send_token() {
 /* Send the token to the next machine. */
+    Message m;
+    m = create_msg("\0",1); // Not sure if that \0 is needed.
+    send_msg(m);
+    return 1;
 }
 
 void create_server(struct hostent *hp) {
@@ -143,18 +314,19 @@ void create_client(struct hostent *hp) {
     SocketC.sin_port = htons(Out);
 
     if((SockOut = socket(hp->h_addrtype, SOCK_DGRAM, 0)) < 0) {
-      puts("Could not open socket.");
-      exit(1);
+        puts("Could not open socket.");
+        exit(1);
     }
 }
 
 int main(int argc, char* arv[]) {
-    int timeout_msecs = 500;
-    int i=0,bufLen = 0,bufFirst = 0;
+    int timeout_msecs = 50,expired;
+    int i=0,bufLen = 0,bufFirst = 0,type;
     char **buf;
     char *s,*hostname;
     struct hostent *hp,*hp2;
     struct pollfd fds[2];
+    Message m;
 
     buf = malloc(sizeof(char*) * BUF_MAX);
     hostname = malloc(MAX_HOSTNAME);
@@ -250,20 +422,29 @@ int main(int argc, char* arv[]) {
                     add_buffer(buf,&bufLen,first,s);
                 }
             } else if(fds[1].revents & POLLIN) { // Got a message! (Remember to check this & (AND).
-                receive_msg(); // What structure is my message? Could it be only a string?
-                if(typeof_msg() == 't') { // t is for token.
+                m = receive_msg(); // What structure is my message? Could it be only a string?
+                type = typeof_msg(m);
+                if(type == 1) { // Got a token
                     Token = 1;
                     set_timeout(TOKEN_TIMEOUT);
+                } else if(type == 2) { // Got a monitor - someone created a new token!
+                    Token = 0;
+                    send_msg(m);
                 } else {
-                    print_message();
-                    send_msg();
+                    print_message(m);
+                    send_msg(m);
                 }
             } else {
                 // Got nothing. Do nothing.
             }
-            if(timedout() || bufLen == 0) {
-                send_token();
-                set_timeout(RECOVERY_TIMEOUT);
+            if(expired = timedout() || bufLen == 0) {
+                if(expired == 1 || bufLen == 0) { // My token timedout or my buffer is empty.
+                    send_token();
+                    set_timeout(RECOVERY_TIMEOUT);
+                } else if(expired == 2) { // Recovery timeout expired.
+                    Token = 1;
+                    send_monitor();
+                }
             }
         }
     }
