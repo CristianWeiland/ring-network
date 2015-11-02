@@ -53,7 +53,7 @@ typedef struct Message {
 
 int Seq = 0; // My maximum sequency is 255.
 int Token = -1; // -1 If I dont know if I have the token, 0 if I dont have, 1 if I have.
-int Machine = -1; // The number of my machine(1-4).
+int MyMachine = -1; // The number of my machine(1-4).
 int Next,Prev; // Number of the previous / next machine (1-4).
 int In,Out; // Number of the In port and the Out port (from my machine).
 int SockIn,SockOut; // Socket in = server socket, Socket out = client socket.
@@ -122,7 +122,7 @@ Message create_msg(char *s,int status,int destiny) {
     //memcpy(m.dest,   ,6); // What should I do here?
     //memcpy(m.orig,   ,6); // What should I do here?
     m.dest = destiny;
-    m.orig = Machine; // This sinalizes me!
+    m.orig = MyMachine; // This sinalizes me!
     m.data = strcpy(m.data, s);
     if(status == 1) {
         m.status = TOKEN_BIT;
@@ -137,7 +137,7 @@ Message create_msg(char *s,int status,int destiny) {
 
 Message str_to_msg(char *s) {
     Message m;
-    //&m = malloc(strlen(s) + 18);
+    //&m = malloc(strlen(s) + 18); // Im not sure if I need to allocate memory, m is not a pointer, but...
     memcpy(&m,s,strlen(s)+17);
     return m;
 }
@@ -164,7 +164,7 @@ int remove_msg() {
 /* This function should remove the message I previously sent from the ring. Return 1 on success, 0 on failure. */
     Message m;
     m = receive_msg();
-    if(m.orig == Machine) {
+    if(m.orig == MyMachine) {
         return 1;
     }
     return 0;
@@ -214,7 +214,8 @@ int typeof_msg(Message m) {
 }
 
 void set_timeout(int type) {
-/* I will create a timeout of 'timeout' miliseconds. */
+/* I will create a timeout of x miliseconds, depending on the parameter. If type = 1, its a TOKEN_TIMEOUT.
+If type = something other than 1, its a RECOVERY_TIMEOUT (I just sent a token). */
     if(type == 1) { // Got the token.
         //gettimeofday(&GotToken, NULL);
         gettimeofday(&TEnd, NULL); // Got time right now. I have to add TOKEN_TIMEOUT.
@@ -249,25 +250,7 @@ int timedout() {
     }
 }
 
-/*
-    unsigned char init;
-    unsigned char len;
-    unsigned char seq;
-    unsigned char dest[6];
-    unsigned char orig[6];
-    unsigned char *data;
-    unsigned char parity;
-    unsigned char status;
-*/
 void print_message(Message m) {
-/*
-    char *aux1,*aux2;
-    aux1 = malloc(7);
-    aux2 = malloc(7);
-    aux1 = strcpy(aux1,m.dest);
-    aux2 = strcpy(aux2,m.orig);
-*/;
-
     printf("Msg: Init = %c, Len = %c, Seq = %c, Dest = %c, Orig = %c, Data = %s, Parity = %c, Status = %c",
         m.init,m.len,m.seq,m.dest,m.orig,m.data,m.parity,m.status);
 }
@@ -315,7 +298,7 @@ void create_server(struct hostent *hp) {
 }
 
 void create_client(struct hostent *hp) {
-    char *host = Hosts[Machine % 4];
+    char *host = Hosts[MyMachine % 4];
 
     if((hp = gethostbyname(host)) == NULL){
         puts("Could not find server IP.");
@@ -334,7 +317,7 @@ void create_client(struct hostent *hp) {
 }
 
 int main(int argc, char* argv[]) {
-    int timeout_msecs = 50,expired,dest,*destVec;
+    int timeout_msecs = 200,expired,dest,*destVec;
     int i=0,bufLen = 0,bufFirst = 0,destLen = 0,destFirst = 0,type;
     char **buf;
     char *s,*localhost;
@@ -354,7 +337,7 @@ int main(int argc, char* argv[]) {
     Hosts[1] = "orval"; // 2
     Hosts[2] = "achel"; // 3
     Hosts[3] = "latrappe"; // 4
-
+    puts("Alalalala");
     gethostname(localhost, MAX_HOSTNAME);
 
     if ((hp = gethostbyname(localhost)) == NULL) {
@@ -362,39 +345,36 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    if(argc != 1) {
-        puts("Correct way to opearate: <Machine number>");
+    if(argc != 2) {
+        puts("Correct way to opearate: <MyMachine number>");
         return -1;
     }
 
-/*
-    Machine     Port(in) Port(out)
+/*  MyMachine     Port(in) Port(out)
     1           PORT     PORT+1
     2           PORT+1   PORT+2
     3           PORT+2   PORT+3
-    4           PORT+3   PORT
-*/
-
-    Machine = argv[1][0] - 48;
-    if(Machine == 1) {
+    4           PORT+3   PORT       */
+    MyMachine = argv[1][0] - 48;
+    if(MyMachine == 1) {
         Token = 1;
         set_timeout(1); // 1 means token_timeout.
         Next = PORT+1;
         Prev = PORT+3;
-        In = PORT + Machine - 1;
-        Out = PORT + Machine;
+        In = PORT + MyMachine - 1;
+        Out = PORT + MyMachine;
     } else if(Token == 4) {
         Next = PORT-3;
         Prev = PORT-1;
         Token = 0;
-        In = PORT + Machine - 1;
+        In = PORT + MyMachine - 1;
         Out = PORT;
     } else if(Token == 2 || Token == 3) {
         Next = PORT+1;
         Prev = PORT-1;
         Token = 0;
-        In = PORT + Machine - 1;
-        Out = PORT + Machine;
+        In = PORT + MyMachine - 1;
+        Out = PORT + MyMachine;
     } else {
         puts("Please choose a number between 1 and 4.");
         return -1;
@@ -408,12 +388,25 @@ int main(int argc, char* argv[]) {
     create_client(hp2);
 
     while(1) {
-        while(Token && bufLen > 0) {
+        while(Token == 1 && bufLen > 0) {
             Message m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
-            while(!send_msg(m));
-            if(poll(&(fds[1]),1,timeout_msecs)) {
-                remove_msg();
+            while(!send_msg(m)) { // Send a message with my string s.
+                expired = timedout();
+                if(expired == 1) {
+                    send_token();
+                    set_timeout(2);
+                }
             }
+            while(!remove_msg()) {
+                expired = timedout();
+                if(expired == 2) { // We lost our token.
+                    Token = 1;
+                    send_monitor();
+                }
+            }
+            /*if(poll(&(fds[1]),1,timeout_msecs)) {
+                remove_msg();
+            }*/
             rem_buffer(buf,&bufLen,&bufFirst,destVec);
             if(timedout() == 1) { // Token time out.
                 send_token();
@@ -424,14 +417,30 @@ int main(int argc, char* argv[]) {
             if(fds[0].revents & POLLIN|POLLPRI) { // Got something in STDIN.
                 fgets(s,1025,stdin); // Is 1023 enough? See * (down there).
                 int dest = s[0] - 48;
-                if(dest < 0 || dest > 5) {
+                if(dest < -1 || dest > 5) {
                     puts("Format not known.");
                 } else {
+                    if(dest == 0) {
+                        puts("Throwing token away...");
+                        Token = 0;
+                    }
                     s += 2; // My data shall not contain the two first characters - machine number and space. ("3 ")
-                    if(Token) {
+                    if(Token == 1) {
                         Message m = create_msg(s,0,dest);
-                        while(!send_msg(m)); // Send a message with my string s.
-                        while(!remove_msg());
+                        while(!send_msg(m)) { // Send a message with my string s.
+                            expired = timedout();
+                            if(expired == 1) {
+                                send_token();
+                                set_timeout(2);
+                            }
+                        }
+                        while(!remove_msg()) {
+                            expired = timedout();
+                            if(expired == 2) { // We lost our token.
+                                Token = 1;
+                                send_monitor();
+                            }
+                        }
                     } else {
                         add_buffer(buf,&bufLen,bufFirst,s,dest,destVec);
                     }
@@ -444,16 +453,19 @@ int main(int argc, char* argv[]) {
                     Token = 1;
                     set_timeout(1); // 1 means token_timeout.
                 } else if(type == 2) { // Got a monitor - someone created a new token!
-                    Token = 0;
+                    Token = 2;
                     send_msg(m);
                 } else {
-                    if(m.dest == Machine || m.dest == 5) { // Its for me!
+                    if(m.dest == MyMachine || m.dest == 5) { // Its for me!
                         print_message(m);
                     }
                     send_msg(m);
                 }
             } else {
-                // Got nothing. Do nothing.
+                // Got nothing. Something wrong occured. I should have received a token or a monitor at least.
+                Token = 1;
+                send_token();
+                set_timeout(2);
             }
             if(expired = timedout() || bufLen == 0) {
                 if(expired == 1 || bufLen == 0) { // My token timedout or my buffer is empty.
