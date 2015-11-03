@@ -66,11 +66,20 @@ struct timeval TBegin,TEnd,RBegin,REnd; // TBegin = Time I got token. TEnd = Tim
 unsigned char calculate_parity(Message m);
 Message receive_msg();
 
+void flush_buf() { // Removes a remaining \n from stdin (in case we do a scanf("%d"))
+    char c;
+    while((c = getchar()) != '\n');
+    return ;
+}
+
 char *msg_to_str(Message m) {
-    int i,len = strlen(m.data);
+    int i,len = (int)m.len;
+    printf("Convertendo tamnho = %d\n",len);
     char *aux,*s = malloc(len + 18);
     memcpy(s,&m,len+17);
     s[len+17] = '\0';
+    puts(s);
+    return s;
     /* // This comments are in case the solution above does not work.
     aux = s;
     *s = m.init;
@@ -152,16 +161,6 @@ unsigned char calculate_parity(Message m) {
         res = res ^ m.data[i];
     }
     return res;
-}
-
-int send_msg(Message m) {
-/* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
-    char *s;
-    s = msg_to_str(m);
-    printf("Sending :'%s'\n",s);
-    if(sendto(Out, s, strlen(s), 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
-        return 0;
-    return 1;
 }
 
 int remove_msg() {
@@ -260,8 +259,8 @@ int timedout() {
 }
 
 void print_message(Message m) {
-    printf("Msg: Init = %c, Len = %c, Seq = %c, Dest = %c, Orig = %c, Data = %s, Parity = %c, Status = %c",
-        m.init,m.len,m.seq,m.dest,m.orig,m.data,m.parity,m.status);
+    printf("Msg: Init = %d, Len = %d, Seq = %d, Dest = %d, Orig = %d, Data = %s, Parity = %d, Status = %c\n",
+        (int)m.init,(int)m.len,(int)m.seq,(int)m.dest,(int)m.orig,m.data,(int)m.parity,m.status);
 }
 
 int rem_buffer(char **buf, int *len, int *first,int *destVec) {
@@ -270,6 +269,17 @@ int rem_buffer(char **buf, int *len, int *first,int *destVec) {
     destVec[*first] = -1;
     (*len)++;
     ((*first)++) % BUF_MAX; // If first is 1024, it will become 0 again.
+    return 1;
+}
+
+int send_msg(Message m) {
+/* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
+    char *s;
+    print_message(m);
+    s = msg_to_str(m);
+    printf("Sending :'%s'\n",s);
+    if(sendto(Out, s, strlen(s), 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
+        return 0;
     return 1;
 }
 
@@ -310,21 +320,21 @@ void create_server(struct hostent *hp) {
 
 void create_client(struct hostent *hp) {
     char *host = Hosts[MyMachine % 4];
+    puts("a1");
 
-    if((hp = gethostbyname(host)) == NULL){
-        puts("Could not find server IP.");
-        exit(1);
-    }
-
+    puts("a2");
     memcpy((char*)&SocketC.sin_addr, (char*)hp->h_addr, hp->h_length);
     SocketC.sin_family = hp->h_addrtype;
 
+    puts("a3");
     SocketC.sin_port = htons(Out);
 
+    puts("a4");
     if((SockOut = socket(hp->h_addrtype, SOCK_DGRAM, 0)) < 0) {
         puts("Could not open socket.");
         exit(1);
     }
+    puts("a5");
 }
 
 int main(int argc, char* argv[]) {
@@ -391,15 +401,16 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    if((hp2 = gethostbyname(Hosts[Next]) == NULL) {
-        puts("Couldn't get my own IP.");
-        return -1;
-    }
-
     create_server(hp); // I do not need to use this parameter, its just to remember that I will have to use it in this function.
 
     puts("When all machines have set up the server, type any number to start connecting clients.");
     scanf("%d",&i);
+    flush_buf();
+
+    if((hp2 = gethostbyname(Hosts[Next%4])) == NULL) {
+        puts("Couldn't get next machine IP.");
+        return -1;
+    }
 
     create_client(hp2);
 
