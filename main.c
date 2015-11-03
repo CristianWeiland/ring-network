@@ -123,6 +123,7 @@ Message create_msg(char *s,int status,int destiny) {
     //memcpy(m.orig,   ,6); // What should I do here?
     m.dest = destiny;
     m.orig = MyMachine; // This sinalizes me!
+    m.data = malloc(strlen(s) + 1);
     m.data = strcpy(m.data, s);
     if(status == 1) {
         m.status = TOKEN_BIT;
@@ -175,7 +176,7 @@ int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
    I should add the string s to my buffer, so I can send it when I get the token.
    Returns 1 on success, 0 on failure (unable to allocate memory).
    PS: I dont have to use destLen neither destFirst, its the same position as buffer.*/
-    printf("Adding '%s' to my buf. Len = %d,first=%d,dest=%d.\n",s,len,first,dest);
+    printf("Adding '%s' to my buf. Len = %d,first=%d,dest=%d.\n",s,*len,first,dest);
     if(*len == BUF_MAX) // Buffer is full. I could, insted of return 0, realloc my buffer and make it a smart buffer. Maybe later.
         return 0;
     int pos = (*len + first) % BUF_MAX; // Circular.
@@ -342,7 +343,7 @@ int main(int argc, char* argv[]) {
     puts("Alalalala");
     gethostname(localhost, MAX_HOSTNAME);
 
-    if ((hp = gethostbyname(localhost)) == NULL) {
+    if((hp = gethostbyname(localhost)) == NULL) {
         puts("Couldn't get my own IP.");
         return -1;
     }
