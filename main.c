@@ -363,13 +363,13 @@ int main(int argc, char* argv[]) {
         Prev = PORT+3;
         In = PORT + MyMachine - 1;
         Out = PORT + MyMachine;
-    } else if(Token == 4) {
+    } else if(MyMachine == 4) {
         Next = PORT-3;
         Prev = PORT-1;
         Token = 0;
         In = PORT + MyMachine - 1;
         Out = PORT;
-    } else if(Token == 2 || Token == 3) {
+    } else if(MyMachine == 2 || MyMachine == 3) {
         Next = PORT+1;
         Prev = PORT-1;
         Token = 0;
