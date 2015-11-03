@@ -175,9 +175,10 @@ int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
    I should add the string s to my buffer, so I can send it when I get the token.
    Returns 1 on success, 0 on failure (unable to allocate memory).
    PS: I dont have to use destLen neither destFirst, its the same position as buffer.*/
+    printf("Adding '%s' to my buf. Len = %d,first=%d,dest=%d.\n",s,len,first,dest);
     if(*len == BUF_MAX) // Buffer is full. I could, insted of return 0, realloc my buffer and make it a smart buffer. Maybe later.
         return 0;
-    int pos = (*len + first) % 1024; // Circular.
+    int pos = (*len + first) % BUF_MAX; // Circular.
     if((buf[pos] = malloc(sizeof(char) * (strlen(s) + 1))) == NULL) {
         puts("(add_buffer) Unable to allocate memory.");
         return 0;
@@ -185,6 +186,7 @@ int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
     strcpy(buf[pos],s);
     destVec[pos] = dest; // I added the string, I have to know its destiny.
     (*len)++;
+    puts("Added succesfully.");
     return 1;
 }
 
