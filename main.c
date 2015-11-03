@@ -30,6 +30,7 @@ Machine number 4 = latrappe
 #include <sys/types.h>
 #include <string.h>
 #include <sys/time.h>
+#include <errno.h>
 
 typedef struct Message {
     unsigned char init;
@@ -157,7 +158,9 @@ int send_msg(Message m) {
 /* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
     char *s;
     s = msg_to_str(m);
-    sendto(Out, s, strlen(s), 0, (struct sockaddr *) &SocketC, sizeof(SocketC));
+    printf("Sending :'%s'\n",s);
+    if(sendto(Out, s, strlen(s), 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
+        return 0;
     return 1;
 }
 
@@ -166,6 +169,7 @@ int remove_msg() {
     Message m;
     m = receive_msg();
     if(m.orig == MyMachine) {
+        puts("Message removed succesfully.");
         return 1;
     }
     return 0;
@@ -201,6 +205,7 @@ Message receive_msg() {
     while(s[0] != INIT) {
         recvfrom(In, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
     }
+    printf("Received :'%s'\n",s);
     m = str_to_msg(s);
     return m;
 }
@@ -236,6 +241,7 @@ If type = something other than 1, its a RECOVERY_TIMEOUT (I just sent a token). 
         gettimeofday(&REnd, NULL); // Got time right now. I have to add TOKEN_TIMEOUT.
         REnd.tv_usec += RECOVERY_TIMEOUT; // Since I am using exactly 1 sec timeout, I can do it this way.
     }
+    puts("Timeout set.");
 }
 
 int timedout() {
@@ -269,6 +275,7 @@ int rem_buffer(char **buf, int *len, int *first,int *destVec) {
 
 int send_token() {
 /* Send the token to the next machine. */
+    puts("Sending token.");
     Message m;
     m = create_msg("\0",1,Next); // Not sure if that \0 is needed.
     send_msg(m);
@@ -277,6 +284,7 @@ int send_token() {
 
 int send_monitor() {
 /* Send the token to the next machine. */
+    puts("Sending monitor.");
     Message m;
     m = create_msg("\0",2,Next); // Not sure if that \0 is needed.
     send_msg(m);
@@ -343,11 +351,6 @@ int main(int argc, char* argv[]) {
     puts("Alalalala");
     gethostname(localhost, MAX_HOSTNAME);
 
-    if((hp = gethostbyname(localhost)) == NULL) {
-        puts("Couldn't get my own IP.");
-        return -1;
-    }
-
     if(argc != 2) {
         puts("Correct way to opearate: <MyMachine number>");
         return -1;
@@ -383,6 +386,16 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
+    if((hp = gethostbyname(localhost)) == NULL) {
+        puts("Couldn't get my own IP.");
+        return -1;
+    }
+
+    if((hp2 = gethostbyname(Hosts[Next]) == NULL) {
+        puts("Couldn't get my own IP.");
+        return -1;
+    }
+
     create_server(hp); // I do not need to use this parameter, its just to remember that I will have to use it in this function.
 
     puts("When all machines have set up the server, type any number to start connecting clients.");
@@ -392,6 +405,7 @@ int main(int argc, char* argv[]) {
 
     while(1) {
         while(Token == 1 && bufLen > 0) {
+            puts("I have the token!! Oh yeah!");
             Message m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
             while(!send_msg(m)) { // Send a message with my string s.
                 expired = timedout();
@@ -429,15 +443,20 @@ int main(int argc, char* argv[]) {
                     }
                     s += 2; // My data shall not contain the two first characters - machine number and space. ("3 ")
                     if(Token == 1) {
+                        puts("I will be sending a message.");
                         Message m = create_msg(s,0,dest);
                         while(!send_msg(m)) { // Send a message with my string s.
-                            expired = timedout();
+                            puts("Problem sending message.");
+                            printf("\tError was: %s\n",strerror(errno));
+                            /*expired = timedout();
                             if(expired == 1) {
                                 send_token();
                                 set_timeout(2);
-                            }
+                            }*/
+                            scanf("%d",&expired);
                         }
                         while(!remove_msg()) {
+                            puts("Problem removing message.");
                             expired = timedout();
                             if(expired == 2) { // We lost our token.
                                 Token = 1;
@@ -469,6 +488,7 @@ int main(int argc, char* argv[]) {
                 Token = 1;
                 send_token();
                 set_timeout(2);
+                puts("Token sent. Setting timeout.");
             }
             if(expired = timedout() || bufLen == 0) {
                 if(expired == 1 || bufLen == 0) { // My token timedout or my buffer is empty.
