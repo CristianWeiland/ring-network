@@ -130,7 +130,7 @@ char *msg_to_str(Message m) {
         printf("%c",s[i]);
     }
     printf("'\n");
-    return s; // FICAR DE OLHO AQUI!!
+    return s; // FICAR DE OLHO AQUI!! Pode ser que eu tenha que retornar aux, e nao s.
 }
 
 Message create_msg(char *s,int status,int destiny) {
@@ -296,7 +296,7 @@ int send_msg(Message m) {
     print_message(m);
     s = msg_to_str(m);
     printf("Sending :'%s'\n",s);
-    if(sendto(Out, s, m.len + NODATALENGTH, 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
+    if(sendto(Out, s, m.len + NOTDATALENGTH, 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
         return 0;
     return 1;
 }
@@ -338,23 +338,34 @@ void create_server(struct hostent *hp) {
 
 void create_client(struct hostent *hp) {
     char *host = Hosts[MyMachine % 4];
-    puts("a1");
 
-    puts("a2");
     memcpy((char*)&SocketC.sin_addr, (char*)hp->h_addr, hp->h_length);
     SocketC.sin_family = hp->h_addrtype;
 
-    puts("a3");
     SocketC.sin_port = htons(Out);
 
-    puts("a4");
     if((SockOut = socket(hp->h_addrtype, SOCK_DGRAM, 0)) < 0) {
         puts("Could not open socket.");
         exit(1);
     }
-    puts("a5");
+    puts("Client created succesfully! (I guess...)");
 }
-
+/*
+This is a test to make sure that str to msg and msg to str are working. And they seem to, but I can not print str succesfully.
+int main() {
+    char *test = malloc(1024);
+    scanf("%1024s",test);
+    puts(test);
+    Message m,m2;
+    m = create_msg(test,0,3);
+    print_message(m);
+    test = msg_to_str(m);
+    m2 = str_to_msg(test);
+    print_message(m2);
+    puts("Done");
+    return 1;
+}
+*/
 int main(int argc, char* argv[]) {
     int timeout_msecs = 200,expired,dest,*destVec;
     int i=0,bufLen = 0,bufFirst = 0,destLen = 0,destFirst = 0,type;
