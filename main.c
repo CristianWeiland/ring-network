@@ -14,6 +14,8 @@ Vertical Parity - 8 bits
 Message Status with Token/Monitor - 8 bits
 Status: A C T M A C 0 0 no qual: A = Address recognized (got message), C = Message Copied (message had no error), T = Token (is token?), M = Monitor (is monitor?)
 
+Size: 1 + 1 + 1 + 1 + 1 + data + 1 + 1 = 7 + data.
+
 Machine number 1 = bowmore
 Machine number 2 = orval
 Machine number 3 = achel
@@ -51,6 +53,7 @@ typedef struct Message {
 #define RECOVERY_TIMEOUT 1000 // How much time will I wait before I create a new token? I have to calculate it!
 #define PORT 47237 // The base port, used to get all 4 ports (which will be 47237,47238,47239,47240).
 #define BUF_MAX 1024
+#define NOTDATALENGTH 7
 
 int Seq = 0; // My maximum sequency is 255.
 int Token = -1; // -1 If I dont know if I have the token, 0 if I dont have, 1 if I have.
@@ -76,12 +79,10 @@ char *msg_to_str(Message m) {
     int i,len = (int)m.len;
     printf("Convertendo tamnho = %d\n",len);
     char *aux,*s = malloc(len + 18);
-    memcpy(s,&m,len+17);
+    s = memcpy(s,&m,len+17);
     s[len+17] = '\0';
-    puts(s);
-    return s;
-    /* // This comments are in case the solution above does not work.
-    aux = s;
+//     This comments are in case the solution above does not work.
+    /*aux = s;
     *s = m.init;
     s++;
     *s = m.len;
@@ -96,14 +97,18 @@ char *msg_to_str(Message m) {
         *s = m.orig[i];
         s++;
     }
+    /**s = m.dest;
+    s++;
+    *s = m.orig;
+    s++;
     for(i = 0; i < len; i++) {
         *s = m.data[i];
         s++;
     }
-    *s = parity;
+    *s = m.parity;
     s++;
-    *s = status;
-    s++
+    *s = m.status;
+    s++;
     *s = '\0';
     /*
     s[0] = m.init;
@@ -119,6 +124,13 @@ char *msg_to_str(Message m) {
     s[len+15] = parity;
     s[len+16] = status;
     */
+//    printf("Estou retornando: '%s'\n",aux);
+    printf("Estou retornando: '");
+    for(i=0; i<m.len + 10; i++) {
+        printf("%c",s[i]);
+    }
+    printf("'\n");
+    return s; // FICAR DE OLHO AQUI!!
 }
 
 Message create_msg(char *s,int status,int destiny) {
@@ -200,11 +212,17 @@ Message receive_msg() {
     Message m;
     char *s = malloc(1024);
     s[0] = '\0';
-    int x = sizeof(SocketS);
+    int x = sizeof(SocketS),len = 0;
     while(s[0] != INIT) {
-        recvfrom(In, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
+        len = recvfrom(In, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
     }
-    printf("Received :'%s'\n",s);
+//    printf("Received :'%s'\n",s);
+    int i;
+    printf("Received : ");
+    for(i=0; i<len; i++) {
+        printf("%c",s[i]);
+    }
+    printf("\n");
     m = str_to_msg(s);
     return m;
 }
@@ -274,11 +292,11 @@ int rem_buffer(char **buf, int *len, int *first,int *destVec) {
 
 int send_msg(Message m) {
 /* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
-    char *s;
+    char *s = malloc(1024);
     print_message(m);
     s = msg_to_str(m);
     printf("Sending :'%s'\n",s);
-    if(sendto(Out, s, strlen(s), 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
+    if(sendto(Out, s, m.len + NODATALENGTH, 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
         return 0;
     return 1;
 }
