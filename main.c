@@ -68,6 +68,7 @@ struct timeval TBegin,TEnd,RBegin,REnd; // TBegin = Time I got token. TEnd = Tim
 
 unsigned char calculate_parity(Message m);
 Message receive_msg();
+void print_message(Message m);
 
 void flush_buf() { // Removes a remaining \n from stdin (in case we do a scanf("%d"))
     char c;
@@ -79,8 +80,8 @@ char *msg_to_str(Message m) {
     int i,len = (int)m.len;
     printf("Convertendo tamnho = %d\n",len);
     char *aux,*s = malloc(len + 18);
-    s = memcpy(s,&m,len+17);
-    s[len+17] = '\0';
+    s = memcpy(s,&m,len+NOTDATALENGTH);
+    s[len+NOTDATALENGTH] = '\0';
 //     This comments are in case the solution above does not work.
     /*aux = s;
     *s = m.init;
@@ -125,11 +126,11 @@ char *msg_to_str(Message m) {
     s[len+16] = status;
     */
 //    printf("Estou retornando: '%s'\n",aux);
-    printf("Estou retornando: '");
+/*    printf("Estou retornando: '");
     for(i=0; i<m.len + 10; i++) {
         printf("%c",s[i]);
     }
-    printf("'\n");
+    printf("'\n");*/
     return s; // FICAR DE OLHO AQUI!! Pode ser que eu tenha que retornar aux, e nao s.
 }
 
@@ -158,10 +159,11 @@ Message create_msg(char *s,int status,int destiny) {
     return m;
 }
 
-Message str_to_msg(char *s) {
+Message str_to_msg(char *s,int len) {
     Message m;
     //&m = malloc(strlen(s) + 18); // Im not sure if I need to allocate memory, m is not a pointer, but...
-    memcpy(&m,s,strlen(s)+17);
+    //memcpy(&m,s,strlen(s)+17);
+    memcpy(&m,s,len);
     return m;
 }
 
@@ -214,16 +216,19 @@ Message receive_msg() {
     s[0] = '\0';
     int x = sizeof(SocketS),len = 0;
     while(s[0] != INIT) {
-        len = recvfrom(In, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
+        len = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
     }
+    printf("Received %d bytes",len);
+    puts("");
 //    printf("Received :'%s'\n",s);
     int i;
-    printf("Received : ");
+/*    printf("Received : ");
     for(i=0; i<len; i++) {
         printf("%c",s[i]);
     }
-    printf("\n");
-    m = str_to_msg(s);
+    printf("\n");*/
+    m = str_to_msg(s,len);
+    print_message(m);
     return m;
 }
 
@@ -295,8 +300,8 @@ int send_msg(Message m) {
     char *s = malloc(1024);
     print_message(m);
     s = msg_to_str(m);
-    printf("Sending :'%s'\n",s);
-    if(sendto(Out, s, m.len + NOTDATALENGTH, 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
+    //printf("Sending :'%s'\n",s);
+    if(sendto(SockOut, s, m.len + NOTDATALENGTH, 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
         return 0;
     return 1;
 }
@@ -387,7 +392,6 @@ int main(int argc, char* argv[]) {
     Hosts[1] = "orval"; // 2
     Hosts[2] = "achel"; // 3
     Hosts[3] = "latrappe"; // 4
-    puts("Alalalala");
     gethostname(localhost, MAX_HOSTNAME);
 
     if(argc != 2) {
@@ -404,19 +408,19 @@ int main(int argc, char* argv[]) {
     if(MyMachine == 1) {
         Token = 1;
         set_timeout(1); // 1 means token_timeout.
-        Next = PORT+1;
-        Prev = PORT+3;
+        Next = MyMachine+1;
+        Prev = MyMachine+3;
         In = PORT + MyMachine - 1;
         Out = PORT + MyMachine;
     } else if(MyMachine == 4) {
-        Next = PORT-3;
-        Prev = PORT-1;
+        Next = MyMachine-3;
+        Prev = MyMachine-1;
         Token = 0;
         In = PORT + MyMachine - 1;
         Out = PORT;
     } else if(MyMachine == 2 || MyMachine == 3) {
-        Next = PORT+1;
-        Prev = PORT-1;
+        Next = MyMachine+1;
+        Prev = MyMachine-1;
         Token = 0;
         In = PORT + MyMachine - 1;
         Out = PORT + MyMachine;
@@ -424,6 +428,10 @@ int main(int argc, char* argv[]) {
         puts("Please choose a number between 1 and 4.");
         return -1;
     }
+
+    printf("MyMachine = %d, Localhost = %s, Port In = %d, Port Out = %d, Next = %d, Prev = %d\n",MyMachine,localhost,In,Out,Next,Prev);
+
+    puts(msg_to_str(str_to_msg("Testeeeeee",10)));
 
     if((hp = gethostbyname(localhost)) == NULL) {
         puts("Couldn't get my own IP.");
@@ -436,12 +444,29 @@ int main(int argc, char* argv[]) {
     scanf("%d",&i);
     flush_buf();
 
-    if((hp2 = gethostbyname(Hosts[Next%4])) == NULL) {
+    printf("The next machine name is: %s\n",Hosts[Next-1]);
+
+    if((hp2 = gethostbyname(Hosts[Next-1])) == NULL) {
         puts("Couldn't get next machine IP.");
         return -1;
     }
 
     create_client(hp2);
+
+    if(MyMachine == 1) {
+        send_msg(create_msg("Teste",0,Next));
+    } else if(MyMachine == 2) {
+        int asdf = 0;
+        int randomname = sizeof(SocketS);
+        asdf = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &randomname);
+        s[asdf] = '\0';
+        //if(asdf > 0) {
+        //    printf("Received : ");
+        //    puts(s);
+        //}
+        printf("Received %d bytes.\n",asdf);
+        print_message(str_to_msg(s,asdf));
+    }
 
     while(1) {
         while(Token == 1 && bufLen > 0) {
