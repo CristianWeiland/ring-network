@@ -76,7 +76,13 @@ void flush_buf() { // Removes a remaining \n from stdin (in case we do a scanf("
     return ;
 }
 
-char *msg_to_str(Message m) {
+char* remove_enter(char *s) {
+    int len = strlen(s);
+    s[len-1] = '\0';
+    return s;
+}
+
+char* msg_to_str(Message m) {
     int i,len = (int)m.len;
     //printf("Convertendo tamnho = %d\n",len);
     char *aux,*s = malloc(len + NOTDATALENGTH);
@@ -153,12 +159,23 @@ int remove_msg() {
     return 0;
 }
 
+int rem_buffer(char **buf, int *len, int *first,int *destVec) {
+/* This function will remove the first element from the buffer and update its length and first position. */
+    //printf("Removing %s, len = %d, first = %d, destiny was %d.",buf[*first],*len,*first,destVec[*first]);
+    free(buf[*first]); // Erasing data.
+    destVec[*first] = -1;
+    (*len)--;
+    ((*first)++) % BUF_MAX; // If first is 1024, it will become 0 again.
+    //puts("Removed succesfully!");
+    return 1;
+}
+
 int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
 /* Parameters: Buffer, how many strings I have on the buffer and the string I will add in the buffer.
    I should add the string s to my buffer, so I can send it when I get the token.
    Returns 1 on success, 0 on failure (unable to allocate memory).
    PS: I dont have to use destLen neither destFirst, its the same position as buffer.*/
-    printf("Adding '%s' to my buf. Len = %d,first=%d,dest=%d.\n",s,*len,first,dest);
+    //printf("Adding '%s' to my buf. Len = %d,first=%d,dest=%d.\n",s,*len,first,dest);
     if(*len == BUF_MAX) // Buffer is full. I could, insted of return 0, realloc my buffer and make it a smart buffer. Maybe later.
         return 0;
     int pos = (*len + first) % BUF_MAX; // Circular.
@@ -169,7 +186,7 @@ int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
     strcpy(buf[pos],s);
     destVec[pos] = dest; // I added the string, I have to know its destiny.
     (*len)++;
-    puts("Added succesfully.");
+    //puts("Added succesfully.");
     return 1;
 }
 
@@ -234,15 +251,6 @@ int timedout() {
 void print_message(Message m) {
     printf("Msg: Init = %d, Len = %d, Seq = %d, Dest = %d, Orig = %d, Data = %s, Parity = %d, Status = %c\n",
        (int)m.init,(int)m.len,(int)m.seq,(int)m.dest,(int)m.orig,m.data,(int)m.parity,m.status);
-}
-
-int rem_buffer(char **buf, int *len, int *first,int *destVec) {
-/* This function will remove the first element from the buffer and update its length and first position. */
-    free(buf[*first]); // Erasing data.
-    destVec[*first] = -1;
-    (*len)++;
-    ((*first)++) % BUF_MAX; // If first is 1024, it will become 0 again.
-    return 1;
 }
 
 int send_msg(Message m) {
@@ -423,37 +431,48 @@ int main(int argc, char* argv[]) {
 
     while(1) {
         if(Token == 1) {
-            //puts("I got the power!");
-            send_token();
-            Token = 0;
-        }/* else {
-            m = receive_msg();
-            type = typeof_msg(m);
-            if(type == 1) { // Got a token
-                Token = 1;
-            } else {
-                if(m.dest == MyMachine || m.dest == 5) { // Its for me!
-                    print_message(m);
+            if(bufLen > 0) {
+                expired = timedout();
+                if(expired == 1) { // My token timed out =/.
+                    send_token();
+                    Token = 0;
                 }
+                Message m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
+                rem_buffer(buf,&bufLen,&bufFirst,destVec);
                 send_msg(m);
+            } else {
+                send_token();
+                Token = 0;
             }
         }
-        sleep(1);*/
         if(poll(fds,2,timeout_msecs)) {
             if(fds[0].revents & POLLIN) { // Teve entrada na STDIN.
-                scanf("%1024s",s);
-                printf("Vc escreveu %s?\n",s);
-                m = create_msg(s,0,Next);
-                send_msg(m);
+                fgets(s,1024,stdin);
+                s = remove_enter(s);
+                int dest = s[0] - 48;
+                s += 2; // To ignore the destiny and empty space bytes. ("2 " or "5 ").
+                if(dest < -1 || dest > 5) {
+                    puts("Format not known.");
+                } else if(dest == 0) {
+                    puts("I should have thrown the token away. But I didn't hu3hu3");
+                } else {
+                    add_buffer(buf,&bufLen,bufFirst,s,dest,destVec);
+                }
+                s -= 2; // Go back to original address.
+                //m = create_msg(s,0,Next);
+                //send_msg(m);
             }
-            if(fds[1].revents) { // ShouldI & with POLLIN? Teve entrada no Socket.
+            if(fds[1].revents & POLLIN) { // Should I & with POLLIN? Teve entrada no Socket.
                 m = receive_msg();
                 type = typeof_msg(m);
                 if(type == 1) {
                     Token = 1;
+                    set_timeout(1);
                 } else {
-                    if(m.dest == MyMachine || m.dest == 5) {
-                        print_message(m);
+                    if(m.dest == MyMachine) {
+                        printf("%s said to me: '%s'\n",Hosts[m.orig-1],m.data);
+                    } else if(m.dest == 5 && m.orig != MyMachine) { // && will assure I will not print my own messages, only send them.
+                        printf("%s said to all: '%s'\n",Hosts[m.orig-1],m.data);
                     }
                     if(m.orig != MyMachine) {
                         send_msg(m);
