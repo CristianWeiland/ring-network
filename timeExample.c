@@ -2,9 +2,15 @@
 #include <sys/time.h>
 
 int main() {
-	struct timeval stop, start;
-	gettimeofday(&start, NULL);
-
+    struct timeval stop;
+    time_t velho = stop.tv_sec;
+    while(1) {
 	gettimeofday(&stop, NULL);
-	printf("took %lu === %lu === %lu\n", stop.tv_usec - start.tv_usec,start.tv_usec,start.tv_sec);
+	if(stop.tv_sec - velho > 3) {
+		velho = stop.tv_sec;
+		printf("passou 3 segundos \n");	
+	}
+        //gettimeofday(&stop, NULL);
+        //printf("%lu --- %lu\n",stop.tv_sec, stop.tv_usec);
+    }   
 }

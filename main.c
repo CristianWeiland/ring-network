@@ -49,8 +49,8 @@ typedef struct Message {
 #define MONITOR_BIT 16
 #define INIT 126
 #define MAX_HOSTNAME 64
-#define TOKEN_TIMEOUT 100 // How much time will I stay with the token?
-#define RECOVERY_TIMEOUT 1000 // How much time will I wait before I create a new token? I have to calculate it!
+#define TOKEN_TIMEOUT 1 // How much time will I stay with the token? (in seconds)
+#define RECOVERY_TIMEOUT 3 // How much time will I wait before I create a new token? I have to calculate it! (in seconds)
 #define PORT 47237 // The base port, used to get all 4 ports (which will be 47237,47238,47239,47240).
 #define BUF_MAX 1024
 #define NOTDATALENGTH 7
@@ -78,60 +78,17 @@ void flush_buf() { // Removes a remaining \n from stdin (in case we do a scanf("
 
 char *msg_to_str(Message m) {
     int i,len = (int)m.len;
-    printf("Convertendo tamnho = %d\n",len);
-    char *aux,*s = malloc(len + 18);
-    s = memcpy(s,&m,len+NOTDATALENGTH);
-    s[len+NOTDATALENGTH] = '\0';
-//     This comments are in case the solution above does not work.
-    /*aux = s;
-    *s = m.init;
-    s++;
-    *s = m.len;
-    s++;
-    *s = m.seq;
-    s++;
-    for(i = 0; i < 6; i++) {
-        *s = m.dest[i];
-        s++;
-    }
-    for(i = 0; i < 6; i++) {
-        *s = m.orig[i];
-        s++;
-    }
-    /**s = m.dest;
-    s++;
-    *s = m.orig;
-    s++;
-    for(i = 0; i < len; i++) {
-        *s = m.data[i];
-        s++;
-    }
-    *s = m.parity;
-    s++;
-    *s = m.status;
-    s++;
-    *s = '\0';
-    /*
-    s[0] = m.init;
-    s[1] = m.len;
-    s[2] = m.seq;
-    for(i = 0; i < 6; i++) {
-        s[i+3] = m.dest[i];
-        s[i+9] = m.orig[i];
-    }
-    for(i = 0; i < len; i++) {
-        s[i+15] = m.data[i];
-    }
-    s[len+15] = parity;
-    s[len+16] = status;
-    */
-//    printf("Estou retornando: '%s'\n",aux);
-/*    printf("Estou retornando: '");
-    for(i=0; i<m.len + 10; i++) {
-        printf("%c",s[i]);
-    }
-    printf("'\n");*/
-    return s; // FICAR DE OLHO AQUI!! Pode ser que eu tenha que retornar aux, e nao s.
+    //printf("Convertendo tamnho = %d\n",len);
+    char *aux,*s = malloc(len + NOTDATALENGTH);
+    aux = s;
+    aux = memcpy(aux,&m,5); // Copy init, len, seq, dest, orig
+    aux += 5;
+    memcpy(aux,m.data,len); // Copy m.data
+    aux += len;
+    memcpy(aux,&m.parity,2); // Copy parity and status
+    aux += 2;
+    *aux = '\0';
+    return s;
 }
 
 Message create_msg(char *s,int status,int destiny) {
@@ -161,9 +118,17 @@ Message create_msg(char *s,int status,int destiny) {
 
 Message str_to_msg(char *s,int len) {
     Message m;
+    int dataLength = len - NOTDATALENGTH;
+    char *aux = s;
+    m.data = malloc(dataLength + 1);
     //&m = malloc(strlen(s) + 18); // Im not sure if I need to allocate memory, m is not a pointer, but...
     //memcpy(&m,s,strlen(s)+17);
-    memcpy(&m,s,len);
+    memcpy(&m,s,5);
+    aux += 5;
+    memcpy(m.data,aux,dataLength);
+    aux += dataLength;
+    memcpy(&m.parity,aux,1);
+    memcpy(&m.status,aux+1,1);
     return m;
 }
 
@@ -218,17 +183,13 @@ Message receive_msg() {
     while(s[0] != INIT) {
         len = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
     }
-    printf("Received %d bytes",len);
-    puts("");
+    RBegin.tv_sec = 0; // Got a message, someone has the token. I dont need my recovery timeout.
+//    printf("Received %d bytes",len);
+//    puts("");
 //    printf("Received :'%s'\n",s);
     int i;
-/*    printf("Received : ");
-    for(i=0; i<len; i++) {
-        printf("%c",s[i]);
-    }
-    printf("\n");*/
     m = str_to_msg(s,len);
-    print_message(m);
+    //print_message(m);
     return m;
 }
 
@@ -247,43 +208,32 @@ void set_timeout(int type) {
 /* I will create a timeout of x miliseconds, depending on the parameter. If type = 1, its a TOKEN_TIMEOUT.
 If type = something other than 1, its a RECOVERY_TIMEOUT (I just sent a token). */
     if(type == 1) { // Got the token.
-        //gettimeofday(&GotToken, NULL);
-        gettimeofday(&TEnd, NULL); // Got time right now. I have to add TOKEN_TIMEOUT.
-        TEnd.tv_usec += TOKEN_TIMEOUT;
-        /*if(TEnd.tv_usec > 1000 - TOKEN_TIMEOUT) { // I can simply add to usecs, it will overflow.
-            TEnd.tv_sec++;
-            int sub = 1000 - TEnd.tv_usec;
-            TEnd.tv_usec = TOKEN_TIMEOUT - sub;
-        } else {
-            TEnd.tv_usec += TOKEN_TIMEOUT;
-        }*/
-
+        gettimeofday(&TBegin, NULL); 
     } else { // Token sent, recovery timeout.
-        //gettimeofday(&RBegin, NULL);
-        gettimeofday(&REnd, NULL); // Got time right now. I have to add TOKEN_TIMEOUT.
-        REnd.tv_usec += RECOVERY_TIMEOUT; // Since I am using exactly 1 sec timeout, I can do it this way.
+        gettimeofday(&RBegin, NULL);
     }
-    puts("Timeout set.");
 }
 
 int timedout() {
 /* Check if a timeout occured. If my Token timedout, return 1. */
     struct timeval now;
     gettimeofday(&now, NULL);
-    if(now.tv_usec > TEnd.tv_usec && TEnd.tv_usec != 0) {
-        TEnd.tv_usec = 0; // Reset my timer.
+    long int diffSec = now.tv_sec - TBegin.tv_sec;
+    if(Token == 1 && diffSec >= TOKEN_TIMEOUT && now.tv_usec - TBegin.tv_usec >= 0) { // Checking if my token timedout.
+        TBegin.tv_usec = 0; // Reset my timer.
         return 1;
-    } else if(now.tv_usec > REnd.tv_usec && REnd.tv_usec != 0) {
-        REnd.tv_usec = 0;
-        return 2;
-    } else {
-        return 0;
     }
+    diffSec = now.tv_sec - RBegin.tv_sec;
+    if(RBegin.tv_sec != 0 && diffSec >= RECOVERY_TIMEOUT && now.tv_usec - RBegin.tv_usec >= 0) { // Checking if recovery timedout.
+        RBegin.tv_usec = 0;
+        return 2;
+    }
+    return 0;
 }
 
 void print_message(Message m) {
     printf("Msg: Init = %d, Len = %d, Seq = %d, Dest = %d, Orig = %d, Data = %s, Parity = %d, Status = %c\n",
-        (int)m.init,(int)m.len,(int)m.seq,(int)m.dest,(int)m.orig,m.data,(int)m.parity,m.status);
+       (int)m.init,(int)m.len,(int)m.seq,(int)m.dest,(int)m.orig,m.data,(int)m.parity,m.status);
 }
 
 int rem_buffer(char **buf, int *len, int *first,int *destVec) {
@@ -298,7 +248,7 @@ int rem_buffer(char **buf, int *len, int *first,int *destVec) {
 int send_msg(Message m) {
 /* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
     char *s = malloc(1024);
-    print_message(m);
+    //print_message(m);
     s = msg_to_str(m);
     //printf("Sending :'%s'\n",s);
     if(sendto(SockOut, s, m.len + NOTDATALENGTH, 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
@@ -308,7 +258,7 @@ int send_msg(Message m) {
 
 int send_token() {
 /* Send the token to the next machine. */
-    puts("Sending token.");
+    //puts("Sending token.");
     Message m;
     m = create_msg("\0",1,Next); // Not sure if that \0 is needed.
     send_msg(m);
@@ -356,7 +306,7 @@ void create_client(struct hostent *hp) {
     puts("Client created succesfully! (I guess...)");
 }
 /*
-This is a test to make sure that str to msg and msg to str are working. And they seem to, but I can not print str succesfully.
+This is a tst to make sure that str to msg and msg to str are working. And they seem to, but I can not print str succesfully.
 int main() {
     char *test = malloc(1024);
     scanf("%1024s",test);
@@ -365,7 +315,7 @@ int main() {
     m = create_msg(test,0,3);
     print_message(m);
     test = msg_to_str(m);
-    m2 = str_to_msg(test);
+m2 = str_to_msg(test
     print_message(m2);
     puts("Done");
     return 1;
@@ -386,7 +336,6 @@ int main(int argc, char* argv[]) {
     s = malloc(1026);
     s[0] = '\0';
     fds[0] = fdAux;
-    fds[1].fd = In;
     Hosts = malloc(sizeof(char*) * 4);
     Hosts[0] = "bowmore"; // 1
     Hosts[1] = "orval"; // 2
@@ -431,7 +380,7 @@ int main(int argc, char* argv[]) {
 
     printf("MyMachine = %d, Localhost = %s, Port In = %d, Port Out = %d, Next = %d, Prev = %d\n",MyMachine,localhost,In,Out,Next,Prev);
 
-    puts(msg_to_str(str_to_msg("Testeeeeee",10)));
+    //puts(msg_to_str(str_to_msg("Testeeeeee",10)));
 
     if((hp = gethostbyname(localhost)) == NULL) {
         puts("Couldn't get my own IP.");
@@ -439,6 +388,9 @@ int main(int argc, char* argv[]) {
     }
 
     create_server(hp); // I do not need to use this parameter, its just to remember that I will have to use it in this function.
+
+    fds[1].fd = SockIn;
+    fds[1].events = POLLIN|POLLPRI;
 
     puts("When all machines have set up the server, type any number to start connecting clients.");
     scanf("%d",&i);
@@ -452,7 +404,7 @@ int main(int argc, char* argv[]) {
     }
 
     create_client(hp2);
-
+/*
     if(MyMachine == 1) {
         send_msg(create_msg("Teste",0,Next));
     } else if(MyMachine == 2) {
@@ -460,14 +412,57 @@ int main(int argc, char* argv[]) {
         int randomname = sizeof(SocketS);
         asdf = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &randomname);
         s[asdf] = '\0';
-        //if(asdf > 0) {
-        //    printf("Received : ");
-        //    puts(s);
-        //}
         printf("Received %d bytes.\n",asdf);
-        print_message(str_to_msg(s,asdf));
+	Message auxiliar;
+	auxiliar  = str_to_msg(s,asdf);
+	puts("String convertida com sucesso.");
+        print_message(auxiliar);
+	printf("passou print_message\n");
     }
+*/
 
+    while(1) {
+        if(Token == 1) {
+            //puts("I got the power!");
+            send_token();
+            Token = 0;
+        }/* else {
+            m = receive_msg();
+            type = typeof_msg(m);
+            if(type == 1) { // Got a token
+                Token = 1;
+            } else {
+                if(m.dest == MyMachine || m.dest == 5) { // Its for me!
+                    print_message(m);
+                }
+                send_msg(m);
+            }
+        }
+        sleep(1);*/
+        if(poll(fds,2,timeout_msecs)) {
+            if(fds[0].revents & POLLIN) { // Teve entrada na STDIN.
+                scanf("%1024s",s);
+                printf("Vc escreveu %s?\n",s);
+                m = create_msg(s,0,Next);
+                send_msg(m);
+            }
+            if(fds[1].revents) { // ShouldI & with POLLIN? Teve entrada no Socket.
+                m = receive_msg();
+                type = typeof_msg(m);
+                if(type == 1) {
+                    Token = 1;
+                } else {
+                    if(m.dest == MyMachine || m.dest == 5) {
+                        print_message(m);
+                    }
+                    if(m.orig != MyMachine) {
+                        send_msg(m);
+                    }
+                }
+            }
+        }
+    }
+/*
     while(1) {
         while(Token == 1 && bufLen > 0) {
             puts("I have the token!! Oh yeah!");
@@ -486,9 +481,6 @@ int main(int argc, char* argv[]) {
                     send_monitor();
                 }
             }
-            /*if(poll(&(fds[1]),1,timeout_msecs)) {
-                remove_msg();
-            }*/
             rem_buffer(buf,&bufLen,&bufFirst,destVec);
             if(timedout() == 1) { // Token time out.
                 send_token();
@@ -496,7 +488,8 @@ int main(int argc, char* argv[]) {
             }
         }
         if(poll(fds, 2, timeout_msecs) ) { // There is something to be read. Message or stdin.
-            if(fds[0].revents & POLLIN|POLLPRI) { // Got something in STDIN.
+                printf("entrou poll! algo para se ler \n");
+                if(fds[0].revents & POLLIN|POLLPRI) { // Got something in STDIN.
                 fgets(s,1025,stdin); // Is 1023 enough? See * (down there).
                 int dest = s[0] - 48;
                 if(dest < -1 || dest > 5) {
@@ -505,6 +498,7 @@ int main(int argc, char* argv[]) {
                     if(dest == 0) {
                         puts("Throwing token away...");
                         Token = 0;
+			set_timeout(2);
                     }
                     s += 2; // My data shall not contain the two first characters - machine number and space. ("3 ")
                     if(Token == 1) {
@@ -513,11 +507,6 @@ int main(int argc, char* argv[]) {
                         while(!send_msg(m)) { // Send a message with my string s.
                             puts("Problem sending message.");
                             printf("\tError was: %s\n",strerror(errno));
-                            /*expired = timedout();
-                            if(expired == 1) {
-                                send_token();
-                                set_timeout(2);
-                            }*/
                             scanf("%d",&expired);
                         }
                         while(!remove_msg()) {
@@ -548,12 +537,6 @@ int main(int argc, char* argv[]) {
                     }
                     send_msg(m);
                 }
-            } else {
-                // Got nothing. Something wrong occured. I should have received a token or a monitor at least.
-                Token = 1;
-                send_token();
-                set_timeout(2);
-                puts("Token sent. Setting timeout.");
             }
             if(expired = timedout() || bufLen == 0) {
                 if(expired == 1 || bufLen == 0) { // My token timedout or my buffer is empty.
@@ -565,7 +548,7 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-    }
+    }*/
 }
 
 /*
