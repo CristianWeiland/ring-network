@@ -32,6 +32,7 @@ Machine number 4 = latrappe
 #include <sys/types.h>
 #include <string.h>
 #include <sys/time.h>
+#include <time.h>
 #include <errno.h>
 
 typedef struct Message {
@@ -248,6 +249,19 @@ int timedout() {
     return 0;
 }
 
+int timedout2(clock_t *this_time, clock_t *last_time) {
+    double time_counter;
+    *this_time = clock();
+    time_counter += (double) (this_time - last_time);
+    *last_time = *this_time;
+    if(time_counter >= 3 * CLOCKS_PER_SEC) {
+        printf("(timedout2) token timeout!");
+        time_counter -= 3 * CLOCKS_PER_SEC;
+        return 1;
+    }
+    return 0;
+}
+
 void print_message(Message m) {
     printf("Msg: Init = %d, Len = %d, Seq = %d, Dest = %d, Orig = %d, Data = %s, Parity = %d, Status = %c\n",
        (int)m.init,(int)m.len,(int)m.seq,(int)m.dest,(int)m.orig,m.data,(int)m.parity,m.status);
@@ -346,7 +360,7 @@ int main(int argc, char* argv[]) {
     fds[0] = fdAux;
     Hosts = malloc(sizeof(char*) * 4);
     Hosts[0] = "bowmore"; // 1
-    Hosts[1] = "orval"; // 2
+    Hosts[1] = "cohiba"; // 2
     Hosts[2] = "achel"; // 3
     Hosts[3] = "latrappe"; // 4
     gethostname(localhost, MAX_HOSTNAME);
@@ -421,18 +435,20 @@ int main(int argc, char* argv[]) {
         asdf = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &randomname);
         s[asdf] = '\0';
         printf("Received %d bytes.\n",asdf);
-	Message auxiliar;
-	auxiliar  = str_to_msg(s,asdf);
-	puts("String convertida com sucesso.");
+    Message auxiliar;
+    auxiliar  = str_to_msg(s,asdf);
+    puts("String convertida com sucesso.");
         print_message(auxiliar);
-	printf("passou print_message\n");
+    printf("passou print_message\n");
     }
 */
-
+    clock_t this_time, last_time;
+    this_time = clock();
+    last_time = this_time;
     while(1) {
         if(Token == 1) {
             if(bufLen > 0) {
-                expired = timedout();
+                expired = timedout2(&this_time, &last_time);
                 if(expired == 1) { // My token timed out =/.
                     send_token();
                     Token = 0;
@@ -517,7 +533,7 @@ int main(int argc, char* argv[]) {
                     if(dest == 0) {
                         puts("Throwing token away...");
                         Token = 0;
-			set_timeout(2);
+            set_timeout(2);
                     }
                     s += 2; // My data shall not contain the two first characters - machine number and space. ("3 ")
                     if(Token == 1) {
@@ -575,3 +591,4 @@ About typing format: Your message should be something like:
 1 All the things I want to say to machine number 1.
 It will be read in this way: 1 digit (In that example, 1), which is the machine number, a space and then text.
 */
+
