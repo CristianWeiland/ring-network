@@ -1,25 +1,40 @@
 /*
-http://www.inf.ufpr.br/elias/redes/servudp.c.txt
-http://www.inf.ufpr.br/elias/redes/cliudp.c.txt
-*/
-/*
 Encapsulation:
-Start Delimiter - 8 bits
-Length
-Sequency
-Dest Add
-Orig Add
-Data
-Vertical Parity - 8 bits
-Message Status with Token/Monitor - 8 bits
-Status: A C T M A C 0 0 no qual: A = Address recognized (got message), C = Message Copied (message had no error), T = Token (is token?), M = Monitor (is monitor?)
 
-Size: 1 + 1 + 1 + 1 + 1 + data + 1 + 1 = 7 + data.
++-----------------+--------+----------+---------+--------+------+--------+--------+
+| Start Delimiter | Length | Sequency | Destiny | Origin | Data | Parity | Status |
++-----------------+--------+----------+---------+--------+------+--------+--------+
+Size:      8 bits   8 bits     8 bits    8 bits   8 bits    ???   8 bits   8 bits
 
-Machine number 1 = bowmore
-Machine number 2 = orval
-Machine number 3 = achel
-Machine number 4 = latrappe
+Start Delimiter - 01111110 - 126.
+Length - Data length
+Sequency - Message sequency
+Destiny - Destiny address (A number from 1-5, 1-4 being machine number (see below) and 5 being everybody.)
+Origin - Origin address (A number from 1-4 representing the machine number).
+Data - Data, with unknown length.
+Parity - Vertical parity.
+Status - A C T M A C 0 0, being: A = Address recognized (got message), C = Message Copied (message had no error), T = Token (is token?), M = Monitor (is monitor?)
+
+Total Size: 1 + 1 + 1 + 1 + 1 + data + 1 + 1 = 7 + data.
+
++----------------+--------------+---------+----------+
+| Machine Number | Machine Name | Port In | Port Out |
++----------------+------------------------+----------+
+|              1 |      Bowmore |   47237 |    47238 |
+|              2 |        Orval |   47238 |    47239 |
+|              3 |        Achel |   47239 |    47240 |
+|              4 |     Latrappe |   47240 |    47237 |
++----------------+--------------+---------+----------+
+
+To send a message you should use this format:
+<Destiny machine number (1-4)> <data I want to send>
+Ex: "2 You shall not pass!" would send to machine 2 (orval) "You shall not pass".
+
+To send a message to everbody the destiny must be 5.
+Ex: "5 Everybody copy?"
+
+To simulate a fail send_token(), you should use this message:
+"0"
 */
 
 #include <stdio.h>
@@ -38,22 +53,24 @@ typedef struct Message {
     unsigned char init;
     unsigned char len;
     unsigned char seq;
-    unsigned char dest; // I will send my machine number.
+    unsigned char dest;
     unsigned char orig;
     unsigned char *data;
     unsigned char parity;
     unsigned char status;
 } Message;
 
-#define TOKEN_BIT 32
-#define MONITOR_BIT 16
+#define OK_BIT 68 // Was the message correct?
+#define GOT_BIT 136 // Did the destiny machine received it?
+#define TOKEN_BIT 32 // Was it a token?
+#define MONITOR_BIT 16 // Was it a monitor?
 #define INIT 126
 #define MAX_HOSTNAME 64
 #define TOKEN_TIMEOUT 1 // How much time will I stay with the token? (in seconds)
 #define RECOVERY_TIMEOUT 3 // How much time will I wait before I create a new token? I have to calculate it! (in seconds)
 #define PORT 47237 // The base port, used to get all 4 ports (which will be 47237,47238,47239,47240).
 #define BUF_MAX 1024
-#define NOTDATALENGTH 7
+#define NOTDATALENGTH 7 // Length of a message with no data.
 
 int Seq = 0; // My maximum sequency is 255.
 int Token = -1; // -1 If I dont know if I have the token, 0 if I dont have, 1 if I have.
@@ -100,13 +117,10 @@ char* msg_to_str(Message m) {
 Message create_msg(char *s,int status,int destiny) {
 /* Parameter s is only data. Status = 1 -> msg is token. Status = 2 -> msg is monitor. Status = 0 -> msg is data. */
     Message m;
-    //&m = malloc(strlen(s) + 18);
     m.init = INIT;
     m.len = strlen(s);
     m.seq = Seq;
     Seq = (Seq++) % 256;
-    //memcpy(m.dest,   ,6); // What should I do here?
-    //memcpy(m.orig,   ,6); // What should I do here?
     m.dest = destiny;
     m.orig = MyMachine; // This sinalizes me!
     m.data = malloc(strlen(s) + 1);
@@ -127,8 +141,6 @@ Message str_to_msg(char *s,int len) {
     int dataLength = len - NOTDATALENGTH;
     char *aux = s;
     m.data = malloc(dataLength + 1);
-    //&m = malloc(strlen(s) + 18); // Im not sure if I need to allocate memory, m is not a pointer, but...
-    //memcpy(&m,s,strlen(s)+17);
     memcpy(&m,s,5);
     aux += 5;
     memcpy(m.data,aux,dataLength);
@@ -141,7 +153,7 @@ Message str_to_msg(char *s,int len) {
 unsigned char calculate_parity(Message m) {
     int i;
     unsigned char res = 0;
-    res = m.len ^ m.seq ^ m.status ^ m.dest ^ m.orig;
+    res = m.len ^ m.seq ^ m.dest ^ m.orig;
     for(i=0; i < (int)m.len; i++) {
         res = res ^ m.data[i];
     }
@@ -161,12 +173,10 @@ int remove_msg() {
 
 int rem_buffer(char **buf, int *len, int *first,int *destVec) {
 /* This function will remove the first element from the buffer and update its length and first position. */
-    //printf("Removing %s, len = %d, first = %d, destiny was %d.",buf[*first],*len,*first,destVec[*first]);
     free(buf[*first]); // Erasing data.
     destVec[*first] = -1;
     (*len)--;
     ((*first)++) % BUF_MAX; // If first is 1024, it will become 0 again.
-    //puts("Removed succesfully!");
     return 1;
 }
 
@@ -175,7 +185,6 @@ int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
    I should add the string s to my buffer, so I can send it when I get the token.
    Returns 1 on success, 0 on failure (unable to allocate memory).
    PS: I dont have to use destLen neither destFirst, its the same position as buffer.*/
-    //printf("Adding '%s' to my buf. Len = %d,first=%d,dest=%d.\n",s,*len,first,dest);
     if(*len == BUF_MAX) // Buffer is full. I could, insted of return 0, realloc my buffer and make it a smart buffer. Maybe later.
         return 0;
     int pos = (*len + first) % BUF_MAX; // Circular.
@@ -186,7 +195,6 @@ int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
     strcpy(buf[pos],s);
     destVec[pos] = dest; // I added the string, I have to know its destiny.
     (*len)++;
-    //puts("Added succesfully.");
     return 1;
 }
 
@@ -201,12 +209,8 @@ Message receive_msg() {
         len = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
     }
     RBegin.tv_sec = 0; // Got a message, someone has the token. I dont need my recovery timeout.
-//    printf("Received %d bytes",len);
-//    puts("");
-//    printf("Received :'%s'\n",s);
     int i;
     m = str_to_msg(s,len);
-    //print_message(m);
     return m;
 }
 
@@ -228,6 +232,7 @@ If type = something other than 1, its a RECOVERY_TIMEOUT (I just sent a token). 
         gettimeofday(&TBegin, NULL); 
     } else { // Token sent, recovery timeout.
         gettimeofday(&RBegin, NULL);
+        //puts("Setting timeout.");
     }
 }
 
@@ -237,12 +242,14 @@ int timedout() {
     gettimeofday(&now, NULL);
     long int diffSec = now.tv_sec - TBegin.tv_sec;
     if(Token == 1 && diffSec >= TOKEN_TIMEOUT && now.tv_usec - TBegin.tv_usec >= 0) { // Checking if my token timedout.
-        TBegin.tv_usec = 0; // Reset my timer.
+        TBegin.tv_sec = 0; // Reset my timer.
         return 1;
     }
     diffSec = now.tv_sec - RBegin.tv_sec;
+    //printf("DiffSec = %ld\n",diffSec);
     if(RBegin.tv_sec != 0 && diffSec >= RECOVERY_TIMEOUT && now.tv_usec - RBegin.tv_usec >= 0) { // Checking if recovery timedout.
-        RBegin.tv_usec = 0;
+        puts("Did not get any message. Something must be wrong...");
+        RBegin.tv_sec = 0;
         return 2;
     }
     return 0;
@@ -256,9 +263,7 @@ void print_message(Message m) {
 int send_msg(Message m) {
 /* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
     char *s = malloc(1024);
-    //print_message(m);
     s = msg_to_str(m);
-    //printf("Sending :'%s'\n",s);
     if(sendto(SockOut, s, m.len + NOTDATALENGTH, 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
         return 0;
     return 1;
@@ -266,9 +271,8 @@ int send_msg(Message m) {
 
 int send_token() {
 /* Send the token to the next machine. */
-    //puts("Sending token.");
     Message m;
-    m = create_msg("\0",1,Next); // Not sure if that \0 is needed.
+    m = create_msg("\0",1,-1); // Not sure if that \0 is needed.
     send_msg(m);
     return 1;
 }
@@ -311,27 +315,11 @@ void create_client(struct hostent *hp) {
         puts("Could not open socket.");
         exit(1);
     }
-    puts("Client created succesfully! (I guess...)");
 }
-/*
-This is a tst to make sure that str to msg and msg to str are working. And they seem to, but I can not print str succesfully.
-int main() {
-    char *test = malloc(1024);
-    scanf("%1024s",test);
-    puts(test);
-    Message m,m2;
-    m = create_msg(test,0,3);
-    print_message(m);
-    test = msg_to_str(m);
-m2 = str_to_msg(test
-    print_message(m2);
-    puts("Done");
-    return 1;
-}
-*/
+
 int main(int argc, char* argv[]) {
     int timeout_msecs = 200,expired,dest,*destVec;
-    int i=0,bufLen = 0,bufFirst = 0,destLen = 0,destFirst = 0,type;
+    int i=0,bufLen = 0,bufFirst = 0,destLen = 0,destFirst = 0,type,sending = 0;
     char **buf;
     char *s,*localhost;
     struct hostent *hp,*hp2;
@@ -356,11 +344,6 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-/*  MyMachine     Port(in) Port(out)
-    1           PORT     PORT+1
-    2           PORT+1   PORT+2
-    3           PORT+2   PORT+3
-    4           PORT+3   PORT       */
     MyMachine = argv[1][0] - 48;
     if(MyMachine == 1) {
         Token = 1;
@@ -386,9 +369,9 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    printf("MyMachine = %d, Localhost = %s, Port In = %d, Port Out = %d, Next = %d, Prev = %d\n",MyMachine,localhost,In,Out,Next,Prev);
-
-    //puts(msg_to_str(str_to_msg("Testeeeeee",10)));
+    int machineInfo = 0;
+    if(machineInfo)
+        printf("MyMachine = %d, Localhost = %s, Port In = %d, Port Out = %d, Next = %d, Prev = %d\n",MyMachine,localhost,In,Out,Next,Prev);
 
     if((hp = gethostbyname(localhost)) == NULL) {
         puts("Couldn't get my own IP.");
@@ -404,7 +387,8 @@ int main(int argc, char* argv[]) {
     scanf("%d",&i);
     flush_buf();
 
-    printf("The next machine name is: %s\n",Hosts[Next-1]);
+    if(machineInfo)
+        printf("The next machine name is: %s\n",Hosts[Next-1]);
 
     if((hp2 = gethostbyname(Hosts[Next-1])) == NULL) {
         puts("Couldn't get next machine IP.");
@@ -412,55 +396,35 @@ int main(int argc, char* argv[]) {
     }
 
     create_client(hp2);
-/*
-    if(MyMachine == 1) {
-        send_msg(create_msg("Teste",0,Next));
-    } else if(MyMachine == 2) {
-        int asdf = 0;
-        int randomname = sizeof(SocketS);
-        asdf = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &randomname);
-        s[asdf] = '\0';
-        printf("Received %d bytes.\n",asdf);
-	Message auxiliar;
-	auxiliar  = str_to_msg(s,asdf);
-	puts("String convertida com sucesso.");
-        print_message(auxiliar);
-	printf("passou print_message\n");
-    }
-*/
 
     while(1) {
         if(Token == 1) {
-            if(bufLen > 0) {
-                expired = timedout();
-                if(expired == 1) { // My token timed out =/.
-                    send_token();
-                    Token = 0;
-                }
-                Message m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
-                rem_buffer(buf,&bufLen,&bufFirst,destVec);
+            if(bufLen > 0 && sending == 00) { // Send next message.
+                m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
                 send_msg(m);
+                sending = 1;
             } else {
                 send_token();
                 Token = 0;
+                set_timeout(2);
             }
         }
         if(poll(fds,2,timeout_msecs)) {
             if(fds[0].revents & POLLIN) { // Teve entrada na STDIN.
                 fgets(s,1024,stdin);
                 s = remove_enter(s);
-                int dest = s[0] - 48;
+                dest = s[0] - 48;
                 s += 2; // To ignore the destiny and empty space bytes. ("2 " or "5 ").
                 if(dest < -1 || dest > 5) {
                     puts("Format not known.");
                 } else if(dest == 0) {
-                    puts("I should have thrown the token away. But I didn't hu3hu3");
+                    puts("Throwing token away.");
+                    Token = 0;
+                    set_timeout(1);
                 } else {
                     add_buffer(buf,&bufLen,bufFirst,s,dest,destVec);
                 }
                 s -= 2; // Go back to original address.
-                //m = create_msg(s,0,Next);
-                //send_msg(m);
             }
             if(fds[1].revents & POLLIN) { // Should I & with POLLIN? Teve entrada no Socket.
                 m = receive_msg();
@@ -470,15 +434,42 @@ int main(int argc, char* argv[]) {
                     set_timeout(1);
                 } else {
                     if(m.dest == MyMachine) {
-                        printf("%s said to me: '%s'\n",Hosts[m.orig-1],m.data);
+                        m.status = m.status | GOT_BIT;
+                        if(m.parity == calculate_parity(m)) {
+                            m.status = m.status | OK_BIT;
+                            printf("%s said to me: '%s'\n",Hosts[m.orig-1],m.data);
+                        } else {
+                            puts("Problem with parity!");
+                        }
                     } else if(m.dest == 5 && m.orig != MyMachine) { // && will assure I will not print my own messages, only send them.
                         printf("%s said to all: '%s'\n",Hosts[m.orig-1],m.data);
+                        if(m.orig == Next) { // I am the last machine that got the message.
+                            m.status = m.status | GOT_BIT;
+                            m.status = m.status | OK_BIT;
+                        }
                     }
                     if(m.orig != MyMachine) {
+                        send_msg(m);
+                    } else if((m.status & GOT_BIT) && (m.status & OK_BIT)) { // Message send succesfully.
+                        sending = 0; // Remove message from ring.
+                        rem_buffer(buf,&bufLen,&bufFirst,destVec);
+                    } else { // Problem sending message. Send it again.
+                        m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
                         send_msg(m);
                     }
                 }
             }
+        }
+        expired = timedout();
+        if(expired == 1 && sending == 0) { // My token timed out =/.
+            puts("Many Talks. Such Message. Wow! Token timedout.");
+            send_token();
+            set_timeout(2);
+            Token = 0;
+        } else if(expired == 2 && sending == 0) {
+            puts("What do you mean he did not receive my token??? Stupid dumbass...");
+            Token = 1;
+            send_monitor();
         }
     }
 /*
