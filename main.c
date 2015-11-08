@@ -346,7 +346,7 @@ int main(int argc, char* argv[]) {
     fds[0] = fdAux;
     Hosts = malloc(sizeof(char*) * 4);
     Hosts[0] = "bowmore"; // 1
-    Hosts[1] = "orval"; // 2
+    Hosts[1] = "cohiba"; // 2
     Hosts[2] = "achel"; // 3
     Hosts[3] = "latrappe"; // 4
     gethostname(localhost, MAX_HOSTNAME);
