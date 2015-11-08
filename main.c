@@ -1,25 +1,40 @@
 /*
-http://www.inf.ufpr.br/elias/redes/servudp.c.txt
-http://www.inf.ufpr.br/elias/redes/cliudp.c.txt
-*/
-/*
 Encapsulation:
-Start Delimiter - 8 bits
-Length
-Sequency
-Dest Add
-Orig Add
-Data
-Vertical Parity - 8 bits
-Message Status with Token/Monitor - 8 bits
-Status: A C T M A C 0 0 no qual: A = Address recognized (got message), C = Message Copied (message had no error), T = Token (is token?), M = Monitor (is monitor?)
 
-Size: 1 + 1 + 1 + 1 + 1 + data + 1 + 1 = 7 + data.
++-----------------+--------+----------+---------+--------+------+--------+--------+
+| Start Delimiter | Length | Sequency | Destiny | Origin | Data | Parity | Status |
++-----------------+--------+----------+---------+--------+------+--------+--------+
+Size:      8 bits   8 bits     8 bits    8 bits   8 bits    ???   8 bits   8 bits
 
-Machine number 1 = bowmore
-Machine number 2 = orval
-Machine number 3 = achel
-Machine number 4 = latrappe
+Start Delimiter - 01111110 - 126.
+Length - Data length
+Sequency - Message sequency
+Destiny - Destiny address (A number from 1-5, 1-4 being machine number (see below) and 5 being everybody.)
+Origin - Origin address (A number from 1-4 representing the machine number).
+Data - Data, with unknown length.
+Parity - Vertical parity.
+Status - A C T M A C 0 0, being: A = Address recognized (got message), C = Message Copied (message had no error), T = Token (is token?), M = Monitor (is monitor?)
+
+Total Size: 1 + 1 + 1 + 1 + 1 + data + 1 + 1 = 7 + data.
+
++----------------+--------------+---------+----------+
+| Machine Number | Machine Name | Port In | Port Out |
++----------------+------------------------+----------+
+|              1 |      Bowmore |   47237 |    47238 |
+|              2 |        Orval |   47238 |    47239 |
+|              3 |        Achel |   47239 |    47240 |
+|              4 |     Latrappe |   47240 |    47237 |
++----------------+--------------+---------+----------+
+
+To send a message you should use this format:
+<Destiny machine number (1-4)> <data I want to send>
+Ex: "2 You shall not pass!" would send to machine 2 (orval) "You shall not pass".
+
+To send a message to everbody the destiny must be 5.
+Ex: "5 Everybody copy?"
+
+To simulate a fail send_token(), you should use this message:
+"0"
 */
 
 #include <stdio.h>
@@ -49,11 +64,14 @@ typedef struct Message {
 #define MONITOR_BIT 16
 #define INIT 126
 #define MAX_HOSTNAME 64
-#define TOKEN_TIMEOUT 1 // How much time will I stay with the token? (in seconds)
-#define RECOVERY_TIMEOUT 3 // How much time will I wait before I create a new token? I have to calculate it! (in seconds)
+#define TOKEN_TIMEOUT 1000 // How much time will I stay with the token? (in seconds)
+#define RECOVERY_TIMEOUT 3000 // How much time will I wait before I create a new token? I have to calculate it! (in seconds)
 #define PORT 47237 // The base port, used to get all 4 ports (which will be 47237,47238,47239,47240).
 #define BUF_MAX 1024
 #define NOTDATALENGTH 7
+#define DATA_TYPE 0
+#define TOKEN_TYPE 1
+#define MONITOR_TYPE 2
 
 int Seq = 0; // My maximum sequency is 255.
 int Token = -1; // -1 If I dont know if I have the token, 0 if I dont have, 1 if I have.
@@ -84,7 +102,6 @@ char* remove_enter(char *s) {
 
 char* msg_to_str(Message m) {
     int i,len = (int)m.len;
-    //printf("Convertendo tamnho = %d\n",len);
     char *aux,*s = malloc(len + NOTDATALENGTH);
     aux = s;
     aux = memcpy(aux,&m,5); // Copy init, len, seq, dest, orig
@@ -100,13 +117,10 @@ char* msg_to_str(Message m) {
 Message create_msg(char *s,int status,int destiny) {
 /* Parameter s is only data. Status = 1 -> msg is token. Status = 2 -> msg is monitor. Status = 0 -> msg is data. */
     Message m;
-    //&m = malloc(strlen(s) + 18);
     m.init = INIT;
     m.len = strlen(s);
     m.seq = Seq;
     Seq = (Seq++) % 256;
-    //memcpy(m.dest,   ,6); // What should I do here?
-    //memcpy(m.orig,   ,6); // What should I do here?
     m.dest = destiny;
     m.orig = MyMachine; // This sinalizes me!
     m.data = malloc(strlen(s) + 1);
@@ -127,8 +141,6 @@ Message str_to_msg(char *s,int len) {
     int dataLength = len - NOTDATALENGTH;
     char *aux = s;
     m.data = malloc(dataLength + 1);
-    //&m = malloc(strlen(s) + 18); // Im not sure if I need to allocate memory, m is not a pointer, but...
-    //memcpy(&m,s,strlen(s)+17);
     memcpy(&m,s,5);
     aux += 5;
     memcpy(m.data,aux,dataLength);
@@ -161,12 +173,10 @@ int remove_msg() {
 
 int rem_buffer(char **buf, int *len, int *first,int *destVec) {
 /* This function will remove the first element from the buffer and update its length and first position. */
-    //printf("Removing %s, len = %d, first = %d, destiny was %d.",buf[*first],*len,*first,destVec[*first]);
     free(buf[*first]); // Erasing data.
     destVec[*first] = -1;
     (*len)--;
     ((*first)++) % BUF_MAX; // If first is 1024, it will become 0 again.
-    //puts("Removed succesfully!");
     return 1;
 }
 
@@ -175,7 +185,6 @@ int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
    I should add the string s to my buffer, so I can send it when I get the token.
    Returns 1 on success, 0 on failure (unable to allocate memory).
    PS: I dont have to use destLen neither destFirst, its the same position as buffer.*/
-    //printf("Adding '%s' to my buf. Len = %d,first=%d,dest=%d.\n",s,*len,first,dest);
     if(*len == BUF_MAX) // Buffer is full. I could, insted of return 0, realloc my buffer and make it a smart buffer. Maybe later.
         return 0;
     int pos = (*len + first) % BUF_MAX; // Circular.
@@ -186,7 +195,6 @@ int add_buffer(char **buf, int *len, int first, char *s,int dest,int *destVec) {
     strcpy(buf[pos],s);
     destVec[pos] = dest; // I added the string, I have to know its destiny.
     (*len)++;
-    //puts("Added succesfully.");
     return 1;
 }
 
@@ -199,14 +207,11 @@ Message receive_msg() {
     int x = sizeof(SocketS),len = 0;
     while(s[0] != INIT) {
         len = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
+        printf("Received %d bytes.\n",len);
     }
     RBegin.tv_sec = 0; // Got a message, someone has the token. I dont need my recovery timeout.
-//    printf("Received %d bytes",len);
-//    puts("");
-//    printf("Received :'%s'\n",s);
     int i;
     m = str_to_msg(s,len);
-    //print_message(m);
     return m;
 }
 
@@ -236,12 +241,12 @@ int timedout() {
     struct timeval now;
     gettimeofday(&now, NULL);
     long int diffSec = now.tv_sec - TBegin.tv_sec;
-    if(Token == 1 && diffSec >= TOKEN_TIMEOUT && now.tv_usec - TBegin.tv_usec >= 0) { // Checking if my token timedout.
+    if(Token == 1 && diffSec >= TOKEN_TIMEOUT/1000 && now.tv_usec - TBegin.tv_usec >= 0) { // Checking if my token timedout.
         TBegin.tv_usec = 0; // Reset my timer.
         return 1;
     }
     diffSec = now.tv_sec - RBegin.tv_sec;
-    if(RBegin.tv_sec != 0 && diffSec >= RECOVERY_TIMEOUT && now.tv_usec - RBegin.tv_usec >= 0) { // Checking if recovery timedout.
+    if(RBegin.tv_sec != 0 && diffSec >= RECOVERY_TIMEOUT/1000 && now.tv_usec - RBegin.tv_usec >= 0) { // Checking if recovery timedout.
         RBegin.tv_usec = 0;
         return 2;
     }
@@ -249,16 +254,18 @@ int timedout() {
 }
 
 void print_message(Message m) {
-    printf("Msg: Init = %d, Len = %d, Seq = %d, Dest = %d, Orig = %d, Data = %s, Parity = %d, Status = %c\n",
-       (int)m.init,(int)m.len,(int)m.seq,(int)m.dest,(int)m.orig,m.data,(int)m.parity,m.status);
+    int type = typeof_msg(m);
+    int isToken = (type == 1) ? 1 : 0;
+    int isMonitor = (type == 2) ? 1 : 0;
+    printf("Msg: Init = %d, Len = %d, Seq = %d, Dest = %d, Orig = %d, Data = %s, Parity = %d, Status = %d, Token = %d, Monitor = %d\n",
+       (int)m.init,(int)m.len,(int)m.seq,(int)m.dest,(int)m.orig,m.data,(int)m.parity,(int)m.status,isToken,isMonitor);
 }
 
 int send_msg(Message m) {
 /* This function should send the string s to my neighbor and return 1 on success and 0 on failure. */
     char *s = malloc(1024);
-    //print_message(m);
     s = msg_to_str(m);
-    //printf("Sending :'%s'\n",s);
+    Seq = (Seq + 1) % 256;
     if(sendto(SockOut, s, m.len + NOTDATALENGTH, 0, (struct sockaddr *) &SocketC, sizeof(SocketC)+1) == -1)
         return 0;
     return 1;
@@ -266,7 +273,6 @@ int send_msg(Message m) {
 
 int send_token() {
 /* Send the token to the next machine. */
-    //puts("Sending token.");
     Message m;
     m = create_msg("\0",1,Next); // Not sure if that \0 is needed.
     send_msg(m);
@@ -311,24 +317,8 @@ void create_client(struct hostent *hp) {
         puts("Could not open socket.");
         exit(1);
     }
-    puts("Client created succesfully! (I guess...)");
 }
-/*
-This is a tst to make sure that str to msg and msg to str are working. And they seem to, but I can not print str succesfully.
-int main() {
-    char *test = malloc(1024);
-    scanf("%1024s",test);
-    puts(test);
-    Message m,m2;
-    m = create_msg(test,0,3);
-    print_message(m);
-    test = msg_to_str(m);
-m2 = str_to_msg(test
-    print_message(m2);
-    puts("Done");
-    return 1;
-}
-*/
+
 int main(int argc, char* argv[]) {
     int timeout_msecs = 200,expired,dest,*destVec;
     int i=0,bufLen = 0,bufFirst = 0,destLen = 0,destFirst = 0,type;
@@ -356,11 +346,6 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-/*  MyMachine     Port(in) Port(out)
-    1           PORT     PORT+1
-    2           PORT+1   PORT+2
-    3           PORT+2   PORT+3
-    4           PORT+3   PORT       */
     MyMachine = argv[1][0] - 48;
     if(MyMachine == 1) {
         Token = 1;
@@ -386,16 +371,17 @@ int main(int argc, char* argv[]) {
         return -1;
     }
 
-    printf("MyMachine = %d, Localhost = %s, Port In = %d, Port Out = %d, Next = %d, Prev = %d\n",MyMachine,localhost,In,Out,Next,Prev);
+    int machineInfo = 0;
 
-    //puts(msg_to_str(str_to_msg("Testeeeeee",10)));
+    if(machineInfo)
+        printf("MyMachine = %d, Localhost = %s, Port In = %d, Port Out = %d, Next = %d, Prev = %d\n",MyMachine,localhost,In,Out,Next,Prev);
 
     if((hp = gethostbyname(localhost)) == NULL) {
         puts("Couldn't get my own IP.");
         return -1;
     }
 
-    create_server(hp); // I do not need to use this parameter, its just to remember that I will have to use it in this function.
+    create_server(hp);
 
     fds[1].fd = SockIn;
     fds[1].events = POLLIN|POLLPRI;
@@ -404,7 +390,8 @@ int main(int argc, char* argv[]) {
     scanf("%d",&i);
     flush_buf();
 
-    printf("The next machine name is: %s\n",Hosts[Next-1]);
+    if(machineInfo)
+        printf("The next machine name is: %s\n",Hosts[Next-1]);
 
     if((hp2 = gethostbyname(Hosts[Next-1])) == NULL) {
         puts("Couldn't get next machine IP.");
@@ -412,22 +399,8 @@ int main(int argc, char* argv[]) {
     }
 
     create_client(hp2);
-/*
-    if(MyMachine == 1) {
-        send_msg(create_msg("Teste",0,Next));
-    } else if(MyMachine == 2) {
-        int asdf = 0;
-        int randomname = sizeof(SocketS);
-        asdf = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &randomname);
-        s[asdf] = '\0';
-        printf("Received %d bytes.\n",asdf);
-	Message auxiliar;
-	auxiliar  = str_to_msg(s,asdf);
-	puts("String convertida com sucesso.");
-        print_message(auxiliar);
-	printf("passou print_message\n");
-    }
-*/
+
+    int gotMessage = 0;
 
     while(1) {
         if(Token == 1) {
@@ -436,38 +409,65 @@ int main(int argc, char* argv[]) {
                 if(expired == 1) { // My token timed out =/.
                     send_token();
                     Token = 0;
+                    gotMessage = 0;
+                    if(poll(&(fds[1]),1,RECOVERY_TIMEOUT) == 0) {
+                        Token = 1;
+                        send_monitor();
+                    } else {
+                        receive_msg(m);
+                        print_message(m);
+                        gotMessage = 1;
+                    }
                 }
-                Message m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
+                if(destVec[bufFirst] == 0) { // User threw token away.
+                    puts("Token thrown away.");
+                    Token = 0;
+                    gotMessage = 0;
+                    if(poll(&(fds[1]),1,RECOVERY_TIMEOUT) == 0) {
+                        Token = 1;
+                        send_monitor();
+                    } else {
+                        receive_msg(m);
+                        print_message(m);
+                        gotMessage = 1;
+                    }
+                } else {
+                    m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
+                    send_msg(m);
+                }
                 rem_buffer(buf,&bufLen,&bufFirst,destVec);
-                send_msg(m);
             } else {
                 send_token();
                 Token = 0;
             }
         }
-        if(poll(fds,2,timeout_msecs)) {
-            if(fds[0].revents & POLLIN) { // Teve entrada na STDIN.
+        if(poll(fds,2,timeout_msecs) || gotMessage) {
+            gotMessage = 0;
+            if(fds[0].revents & POLLIN) { // There is something in stdin!
                 fgets(s,1024,stdin);
                 s = remove_enter(s);
-                int dest = s[0] - 48;
+                dest = s[0] - 48;
                 s += 2; // To ignore the destiny and empty space bytes. ("2 " or "5 ").
                 if(dest < -1 || dest > 5) {
                     puts("Format not known.");
                 } else if(dest == 0) {
-                    puts("I should have thrown the token away. But I didn't hu3hu3");
+                    add_buffer(buf,&bufLen,bufFirst,"",0,destVec);
                 } else {
                     add_buffer(buf,&bufLen,bufFirst,s,dest,destVec);
                 }
                 s -= 2; // Go back to original address.
-                //m = create_msg(s,0,Next);
-                //send_msg(m);
             }
-            if(fds[1].revents & POLLIN) { // Should I & with POLLIN? Teve entrada no Socket.
+            if(fds[1].revents & POLLIN) {
                 m = receive_msg();
                 type = typeof_msg(m);
-                if(type == 1) {
+                if(type == TOKEN_TYPE) {
                     Token = 1;
                     set_timeout(1);
+                } else if(type == 2) {
+                    puts("Got a monitor!");
+                    if(m.orig != MyMachine) {
+                        send_msg(m);
+                    }
                 } else {
                     if(m.dest == MyMachine) {
                         printf("%s said to me: '%s'\n",Hosts[m.orig-1],m.data);
@@ -574,4 +574,31 @@ int main(int argc, char* argv[]) {
 About typing format: Your message should be something like:
 1 All the things I want to say to machine number 1.
 It will be read in this way: 1 digit (In that example, 1), which is the machine number, a space and then text.
+*/
+
+
+/*
+Os três inibidores destruídos pela Elite Azul, seguido das duas torres do Nexus e uma Riven fantástica de SkyBart, pareciam decretar o rebaixamento da KaBuM Black do CBLoL. No entanto, com uma luta fantástica onde Element flanqueou a Jayob com um Renekton imenso a equipe de Limeira sobreviveu e levou o terceiro jogo. E o quarto. E o quinto.
+
+A equipe de SkyBart e Goku, ex-jogadores da KaBuM Black, começou muito bem a série, conquistando boas rotações e pressões de mapa. Turtle fazia o papel de tanque e utilidade do time junto de Baiano, e as rotas solo eram a principal fonte de dano da equipe - ajudada por um bom Mordekaiser de Pdr no segundo jogo. No entanto, a KaBuM desvendou o truque no terceiro. "Eles não mudaram o plano de jogo. Focavam o topo e faziam duas Pedras da Visão para controlar o mapa", disse Espeon. "O Veigar também era um problema maior do que esperávamos, então banimos ele. As rotas de baixo não faziam nada na partida, então priorizamos o Shen pra ter um jogador a mais no topo - que era o foco do jogo - ao mesmo tempo que não teríamos problemas no bot".
+A vitória da KaBuM Black significou não só a vaga da equipe, mas de todas as participantes do CBLoL 2015 - Segunda Etapa. Jayob eSports, BigGods e Santos Dexterity voltam a integrar o Circuito Desafiante, onde tentarão buscar novamente a tão sonhada vaga para a elite do cenário competitivo.
+E assim foi. Jogando duas vezes com Shen suporte, Espeon conseguiu ajudar muito sua equipe. Há de se destacar o Viktor fantástico de Vash durante a série (A/M/A total de 28/9/11 em três jogos), que segurou o ímpeto da Jayob com muito dano, principalmente na terceira partida, que iniciou a virada da equipe. O meio terminou com um placar de 17/4/6, sendo responsável por metade do dano de sua equipe, com 59,8 mil de dano mágico - veja o Histórico da Partida.
+Os milhões de jogadores ao redor do mundo que jogam League of Legends geram um monte de dados. Se você visita sites que dão a média de vitórias e sumários de Campeões, você está vendo um pouco desses dados em ação. Como membro da equipe de Inteligência na Riot, ajudo a analisar esses dados puros em informação utilizável para que ela possa ser usada para melhorar League of Legends. Essa é a primeira parte de uma série recorrente sobre dados só pelo bem dos dados, chamada Clarividência.
+Apesar de não darem nenhum atributos de combate, elas são incrivelmente poderosas. Sentinelas dão visão, visão é informação e informação é poder. Sentinelas permitem que você assuma menos riscos: menos emboscadas, menos gente indo de cara no arbusto ou perdendo o jogo no Barão.
+Então sentinelas são boas, mas com que frequência jogadores normalmente as compram? No decorrer de uma partida, o jogador médio compra 0,9 sentinelas, que definimos aqui como Sentinelas Invisíveis ou Sentinelas Detectoras. Contudo, esses dados são salvos pelos heróis altruístas que compram várias sentinelas. A maioria dos jogadores, 64% deles, nunca comprou uma única sentinela e apenas um em dez compra mais de duas.
+Não é surpreendente que as compras de sentinelas variam com as funções. Atiradores são os que compram menos sentinelas, sendo 0,3 por partida, enquanto suportes compram 1,8 sentinelas por jogo. Isso não inclui a Pedra da Visão, que predominantemente acaba na itemização dos suportes. Antes que você grite com a Vayne da sua equipe, tenha em mente que faz mais sentido comprar sentinelas em algumas funções que em outras. Suportes, por exemplo, não escalam tão bem com itens quanto as outras funções e normalmente investem mais de seu ouro em itens focados em equipe como as sentinelas. Caçadores normalmente passeiam mais pelo mapa e têm a oportunidade de colocar sentinelas em pontos estratégicos. Por outro lado, jogadores de topo ficam isolados de controles de objetivo de meio de partida, dependendo muito de sentinelas e podem gastar muito mais de seu ouro em itens de duelo.
+Dito isso, a maioria dos jogadores provavelmente poderia gastar um pouco mais com sentinelas. Vamos dar uma olhada nos padrões de sentinelas dentre diferentes níveis de jogo. Jogadores no Bronze compram apenas 0,6 sentinelas por partida, enquanto jogadores no Mestre e Desafiante compram quatro vezes mais. A alta tendência é especialmente forte com Sentinelas Detectoras, que no Bronze é comprada menos de 0,2 vezes por partida, sendo que o Mestre típico compra mais de 1,2 por jogo. Aviso: apesar de poder existir um vínculo de causalidade entre a visão de seu jogo e sua classificação, dobrar as compras de sentinela provavelmente não fará com que você de repente pule do Prata para o Diamante. Essas tendências nos mostram correlação e não contam toda a história de quantas sentinelas você deveria comprar. Esse tipo de análise completa talvez seja um assunto para outro dia.
+A maioria dos jogadores fica com o Totem da Vigilância sem aprimoramento. Especificamente, 73% dos jogadores acabam as partidas com o Amuleto amarelo, 12% com as Lentes Detectoras e 5% com uma das cinco opções.
+Vamos condensar os Amuletos básicos e seus diferentes aprimoramentos em três classes: Esfera, Lentes e Totem. Agora, podemos ver mais facilmente as tendências entre funções e níveis de jogo diferentes.
+Totem é o Amuleto escolhido para todas as funções exceto Suporte, que prefere as Lentes 54% das vezes. Caçadores ficam em segundo lugar na função que mais possui Lentes, escolhendo-as em 22% das partidas. A Esfera, sendo uma escolha mais de nicho e situacional, não recebe o mesmo tanto de amor. Apenas entre os atiradores a Esfera aparece em um número significativo o tempo todo, mas ainda assim, em apenas 18% das partidas.
+O Totem continua dominante na maioria dos níveis de jogo, incluindo 91% dos jogos de Bronze e 50% de Diamante. A taxa de uso das Lentes e da Esfera crescem gradualmente quando você sobe na classificação, com as lentes ultrapassando os Totens do tier Mestre para cima. Lentes encontram mais ação nesses jogos de alta habilidade, em parte, porque jogadores nesse nível estão usando sentinelas com uma frequência muito maior. Faz sentido comprar uma vassoura se você tem algo a varrer!
+Pode ser difícil criar o hábito de comprar sentinelas, mas siga nosso conselho: caso queira melhorar seu controle de visão, comece devagar. Pegue uma Sentinela Invisível a mais no primeiro retorno à base; você agradecerá por ter despendido 75 de ouro quando vir aquele caçador chegando. Pegue uma Sentinela Detectora antecipadamente e não sinta-se mal caso ela seja destruída. Não esqueça de aprimorar seu Amuleto; sim, é provavelmente melhor do que aquela quarta Espada Longa. Você irá mais longe que a maioria dos jogadores.
+
+
+
+
+
+
+
+
 */
