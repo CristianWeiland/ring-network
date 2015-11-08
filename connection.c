@@ -114,6 +114,20 @@ char* msg_to_str(Message m) {
     return s;
 }
 
+Message str_to_msg(char *s,int len) {
+    Message m;
+    int dataLength = len - NOTDATALENGTH;
+    char *aux = s;
+    m.data = malloc(dataLength + 1);
+    memcpy(&m,s,5);
+    aux += 5;
+    memcpy(m.data,aux,dataLength);
+    aux += dataLength;
+    memcpy(&m.parity,aux,1);
+    memcpy(&m.status,aux+1,1);
+    return m;
+}
+
 Message create_msg(char *s,int status,int destiny) {
 /* Parameter s is only data. Status = 1 -> msg is token. Status = 2 -> msg is monitor. Status = 0 -> msg is data. */
     Message m;
@@ -136,20 +150,6 @@ Message create_msg(char *s,int status,int destiny) {
     return m;
 }
 
-Message str_to_msg(char *s,int len) {
-    Message m;
-    int dataLength = len - NOTDATALENGTH;
-    char *aux = s;
-    m.data = malloc(dataLength + 1);
-    memcpy(&m,s,5);
-    aux += 5;
-    memcpy(m.data,aux,dataLength);
-    aux += dataLength;
-    memcpy(&m.parity,aux,1);
-    memcpy(&m.status,aux+1,1);
-    return m;
-}
-
 unsigned char calculate_parity(Message m) {
     int i;
     unsigned char res = 0;
@@ -158,17 +158,6 @@ unsigned char calculate_parity(Message m) {
         res = res ^ m.data[i];
     }
     return res;
-}
-
-int remove_msg() {
-/* This function should remove the message I previously sent from the ring. Return 1 on success, 0 on failure. */
-    Message m;
-    m = receive_msg();
-    if(m.orig == MyMachine) {
-        puts("Message removed succesfully.");
-        return 1;
-    }
-    return 0;
 }
 
 int rem_buffer(char **buf, int *len, int *first,int *destVec) {
@@ -207,7 +196,6 @@ Message receive_msg() {
     int x = sizeof(SocketS),len = 0;
     while(s[0] != INIT) {
         len = recvfrom(SockIn, s, 1024, 0, (struct sockaddr *) &SocketS, &x);
-//        printf("Received %d bytes.\n",len);
     }
     RBegin.tv_sec = 0; // Got a message, someone has the token. I dont need my recovery timeout.
     int i;
@@ -481,124 +469,4 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-/*
-    while(1) {
-        while(Token == 1 && bufLen > 0) {
-            puts("I have the token!! Oh yeah!");
-            Message m = create_msg(buf[bufFirst],0,destVec[bufFirst]);
-            while(!send_msg(m)) { // Send a message with my string s.
-                expired = timedout();
-                if(expired == 1) {
-                    send_token();
-                    set_timeout(2);
-                }
-            }
-            while(!remove_msg()) {
-                expired = timedout();
-                if(expired == 2) { // We lost our token.
-                    Token = 1;
-                    send_monitor();
-                }
-            }
-            rem_buffer(buf,&bufLen,&bufFirst,destVec);
-            if(timedout() == 1) { // Token time out.
-                send_token();
-                set_timeout(2); // 2 means recovery_timeout.
-            }
-        }
-        if(poll(fds, 2, timeout_msecs) ) { // There is something to be read. Message or stdin.
-                printf("entrou poll! algo para se ler \n");
-                if(fds[0].revents & POLLIN|POLLPRI) { // Got something in STDIN.
-                fgets(s,1025,stdin); // Is 1023 enough? See * (down there).
-                int dest = s[0] - 48;
-                if(dest < -1 || dest > 5) {
-                    puts("Format not known.");
-                } else {
-                    if(dest == 0) {
-                        puts("Throwing token away...");
-                        Token = 0;
-			set_timeout(2);
-                    }
-                    s += 2; // My data shall not contain the two first characters - machine number and space. ("3 ")
-                    if(Token == 1) {
-                        puts("I will be sending a message.");
-                        Message m = create_msg(s,0,dest);
-                        while(!send_msg(m)) { // Send a message with my string s.
-                            puts("Problem sending message.");
-                            printf("\tError was: %s\n",strerror(errno));
-                            scanf("%d",&expired);
-                        }
-                        while(!remove_msg()) {
-                            puts("Problem removing message.");
-                            expired = timedout();
-                            if(expired == 2) { // We lost our token.
-                                Token = 1;
-                                send_monitor();
-                            }
-                        }
-                    } else {
-                        add_buffer(buf,&bufLen,bufFirst,s,dest,destVec);
-                    }
-                    s -= 2;
-                }
-            } else if(fds[1].revents & POLLIN) { // Got a message! (Remember to check this & (AND).
-                m = receive_msg(); // What structure is my message? Could it be only a string?
-                type = typeof_msg(m);
-                if(type == 1) { // Got a token
-                    Token = 1;
-                    set_timeout(1); // 1 means token_timeout.
-                } else if(type == 2) { // Got a monitor - someone created a new token!
-                    Token = 2;
-                    send_msg(m);
-                } else {
-                    if(m.dest == MyMachine || m.dest == 5) { // Its for me!
-                        print_message(m);
-                    }
-                    send_msg(m);
-                }
-            }
-            if(expired = timedout() || bufLen == 0) {
-                if(expired == 1 || bufLen == 0) { // My token timedout or my buffer is empty.
-                    send_token();
-                    set_timeout(2); // 2 means recovery_timeout.
-                } else if(expired == 2) { // Recovery timeout expired.
-                    Token = 1;
-                    send_monitor();
-                }
-            }
-        }
-    }*/
 }
-
-/*
-About typing format: Your message should be something like:
-1 All the things I want to say to machine number 1.
-It will be read in this way: 1 digit (In that example, 1), which is the machine number, a space and then text.
-*/
-
-
-/*
-Os três inibidores destruídos pela Elite Azul, seguido das duas torres do Nexus e uma Riven fantástica de SkyBart, pareciam decretar o rebaixamento da KaBuM Black do CBLoL. No entanto, com uma luta fantástica onde Element flanqueou a Jayob com um Renekton imenso a equipe de Limeira sobreviveu e levou o terceiro jogo. E o quarto. E o quinto.
-
-A equipe de SkyBart e Goku, ex-jogadores da KaBuM Black, começou muito bem a série, conquistando boas rotações e pressões de mapa. Turtle fazia o papel de tanque e utilidade do time junto de Baiano, e as rotas solo eram a principal fonte de dano da equipe - ajudada por um bom Mordekaiser de Pdr no segundo jogo. No entanto, a KaBuM desvendou o truque no terceiro. "Eles não mudaram o plano de jogo. Focavam o topo e faziam duas Pedras da Visão para controlar o mapa", disse Espeon. "O Veigar também era um problema maior do que esperávamos, então banimos ele. As rotas de baixo não faziam nada na partida, então priorizamos o Shen pra ter um jogador a mais no topo - que era o foco do jogo - ao mesmo tempo que não teríamos problemas no bot".
-A vitória da KaBuM Black significou não só a vaga da equipe, mas de todas as participantes do CBLoL 2015 - Segunda Etapa. Jayob eSports, BigGods e Santos Dexterity voltam a integrar o Circuito Desafiante, onde tentarão buscar novamente a tão sonhada vaga para a elite do cenário competitivo.
-E assim foi. Jogando duas vezes com Shen suporte, Espeon conseguiu ajudar muito sua equipe. Há de se destacar o Viktor fantástico de Vash durante a série (A/M/A total de 28/9/11 em três jogos), que segurou o ímpeto da Jayob com muito dano, principalmente na terceira partida, que iniciou a virada da equipe. O meio terminou com um placar de 17/4/6, sendo responsável por metade do dano de sua equipe, com 59,8 mil de dano mágico - veja o Histórico da Partida.
-Os milhões de jogadores ao redor do mundo que jogam League of Legends geram um monte de dados. Se você visita sites que dão a média de vitórias e sumários de Campeões, você está vendo um pouco desses dados em ação. Como membro da equipe de Inteligência na Riot, ajudo a analisar esses dados puros em informação utilizável para que ela possa ser usada para melhorar League of Legends. Essa é a primeira parte de uma série recorrente sobre dados só pelo bem dos dados, chamada Clarividência.
-Apesar de não darem nenhum atributos de combate, elas são incrivelmente poderosas. Sentinelas dão visão, visão é informação e informação é poder. Sentinelas permitem que você assuma menos riscos: menos emboscadas, menos gente indo de cara no arbusto ou perdendo o jogo no Barão.
-Então sentinelas são boas, mas com que frequência jogadores normalmente as compram? No decorrer de uma partida, o jogador médio compra 0,9 sentinelas, que definimos aqui como Sentinelas Invisíveis ou Sentinelas Detectoras. Contudo, esses dados são salvos pelos heróis altruístas que compram várias sentinelas. A maioria dos jogadores, 64% deles, nunca comprou uma única sentinela e apenas um em dez compra mais de duas.
-Não é surpreendente que as compras de sentinelas variam com as funções. Atiradores são os que compram menos sentinelas, sendo 0,3 por partida, enquanto suportes compram 1,8 sentinelas por jogo. Isso não inclui a Pedra da Visão, que predominantemente acaba na itemização dos suportes. Antes que você grite com a Vayne da sua equipe, tenha em mente que faz mais sentido comprar sentinelas em algumas funções que em outras. Suportes, por exemplo, não escalam tão bem com itens quanto as outras funções e normalmente investem mais de seu ouro em itens focados em equipe como as sentinelas. Caçadores normalmente passeiam mais pelo mapa e têm a oportunidade de colocar sentinelas em pontos estratégicos. Por outro lado, jogadores de topo ficam isolados de controles de objetivo de meio de partida, dependendo muito de sentinelas e podem gastar muito mais de seu ouro em itens de duelo.
-Dito isso, a maioria dos jogadores provavelmente poderia gastar um pouco mais com sentinelas. Vamos dar uma olhada nos padrões de sentinelas dentre diferentes níveis de jogo. Jogadores no Bronze compram apenas 0,6 sentinelas por partida, enquanto jogadores no Mestre e Desafiante compram quatro vezes mais. A alta tendência é especialmente forte com Sentinelas Detectoras, que no Bronze é comprada menos de 0,2 vezes por partida, sendo que o Mestre típico compra mais de 1,2 por jogo. Aviso: apesar de poder existir um vínculo de causalidade entre a visão de seu jogo e sua classificação, dobrar as compras de sentinela provavelmente não fará com que você de repente pule do Prata para o Diamante. Essas tendências nos mostram correlação e não contam toda a história de quantas sentinelas você deveria comprar. Esse tipo de análise completa talvez seja um assunto para outro dia.
-A maioria dos jogadores fica com o Totem da Vigilância sem aprimoramento. Especificamente, 73% dos jogadores acabam as partidas com o Amuleto amarelo, 12% com as Lentes Detectoras e 5% com uma das cinco opções.
-Vamos condensar os Amuletos básicos e seus diferentes aprimoramentos em três classes: Esfera, Lentes e Totem. Agora, podemos ver mais facilmente as tendências entre funções e níveis de jogo diferentes.
-Totem é o Amuleto escolhido para todas as funções exceto Suporte, que prefere as Lentes 54% das vezes. Caçadores ficam em segundo lugar na função que mais possui Lentes, escolhendo-as em 22% das partidas. A Esfera, sendo uma escolha mais de nicho e situacional, não recebe o mesmo tanto de amor. Apenas entre os atiradores a Esfera aparece em um número significativo o tempo todo, mas ainda assim, em apenas 18% das partidas.
-O Totem continua dominante na maioria dos níveis de jogo, incluindo 91% dos jogos de Bronze e 50% de Diamante. A taxa de uso das Lentes e da Esfera crescem gradualmente quando você sobe na classificação, com as lentes ultrapassando os Totens do tier Mestre para cima. Lentes encontram mais ação nesses jogos de alta habilidade, em parte, porque jogadores nesse nível estão usando sentinelas com uma frequência muito maior. Faz sentido comprar uma vassoura se você tem algo a varrer!
-Pode ser difícil criar o hábito de comprar sentinelas, mas siga nosso conselho: caso queira melhorar seu controle de visão, comece devagar. Pegue uma Sentinela Invisível a mais no primeiro retorno à base; você agradecerá por ter despendido 75 de ouro quando vir aquele caçador chegando. Pegue uma Sentinela Detectora antecipadamente e não sinta-se mal caso ela seja destruída. Não esqueça de aprimorar seu Amuleto; sim, é provavelmente melhor do que aquela quarta Espada Longa. Você irá mais longe que a maioria dos jogadores.
-
-
-
-
-
-
-
-
-*/
