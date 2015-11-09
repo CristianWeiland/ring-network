@@ -388,7 +388,9 @@ int main(int argc, char* argv[]) {
 
     create_client(hp2);
 
-    int gotMessage = 0;
+    int gotMessage = 0,j;
+    char *aux1;
+    char *aux2 = malloc(257);
 
     while(1) {
         if(Token == 1) {
@@ -441,7 +443,24 @@ int main(int argc, char* argv[]) {
                 } else if(dest == 0) {
                     add_buffer(buf,&bufLen,bufFirst,"",0,destVec);
                 } else {
+                    aux1 = s;
+                    while(strlen(s) > 255) {
+                        for(j=0; j<255; j++) {
+                            aux2[j] = s[j];
+                        }
+                        aux2[255] = '\0';
+                        add_buffer(buf,&bufLen,bufFirst,aux2,dest,destVec);
+                        s += 255;
+                    }
                     add_buffer(buf,&bufLen,bufFirst,s,dest,destVec);
+                    s = aux1;
+                    /*
+                    if(strlen(s) < 255) // Since m.len is only 1 byte, we can not send more than 255 data bytes per message.
+                        add_buffer(buf,&bufLen,bufFirst,s,dest,destVec);
+                    else {
+                        s += 256;
+                    }
+                    */
                 }
                 s -= 2; // Go back to original address.
             }
